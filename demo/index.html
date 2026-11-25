@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Démo Météo animée</title>
+<style>
+  body { margin:0; background:#111; font-family: Roboto, system-ui, sans-serif; color:#eee; }
+  .bar { display:flex; flex-wrap:wrap; gap:6px; padding:10px; position:sticky; top:0; z-index:5; background:#1b1b1b; }
+  .bar button { background:#2d2d2d; color:#eee; border:1px solid #444; border-radius:6px; padding:6px 10px; cursor:pointer; }
+  .bar button.sel { background:#2f80ed; border-color:#2f80ed; }
+  .wrap { max-width: 900px; margin: 12px auto; padding: 0 12px; }
+</style>
+</head>
+<body>
+<div class="bar" id="bar"></div>
+<div class="wrap"><meteo-anime-card id="card"></meteo-anime-card></div>
+
+<script>
+/* Remplaçant minimal de <ha-icon> hors Home Assistant (émojis) */
+const EMO = {
+  'mdi:weather-sunny':'☀️','mdi:weather-night':'🌙','mdi:weather-night-partly-cloudy':'☁️','mdi:weather-partly-cloudy':'⛅',
+  'mdi:weather-cloudy':'☁️','mdi:weather-rainy':'🌧️','mdi:weather-pouring':'🌧️','mdi:weather-snowy':'🌨️','mdi:weather-snowy-rainy':'🌨️',
+  'mdi:weather-fog':'🌫️','mdi:weather-hail':'🌨️','mdi:weather-lightning':'🌩️','mdi:weather-lightning-rainy':'⛈️',
+  'mdi:weather-windy':'💨','mdi:weather-windy-variant':'💨','mdi:alert':'⚠️','mdi:leaf':'🍃',
+};
+customElements.define('ha-icon', class extends HTMLElement {
+  connectedCallback() {
+    this.style.display = this.style.display || 'inline-block';
+    this.style.fontSize = 'var(--mdc-icon-size, 24px)';
+    this.style.lineHeight = '1';
+    this.textContent = EMO[this.getAttribute('icon')] || '•';
+  }
+});
+</script>
+<script src="../meteo-anime-card.js"></script>
+<script>
+const CONDS = ['sunny','partlycloudy','cloudy','rainy','pouring','lightning-rainy','snowy','snowy-rainy','hail','fog','windy'];
+const H = 3600e3;
+const now = Date.now();
+const firstHour = new Date(Math.ceil(now / H) * H);
+
+function daily() {
+  const c = ['rainy','rainy','sunny','rainy','rainy'], hi=[4,4,1,2,6], lo=[0,-3,-3,0,2], ws=[13,9.3,9.3,11.1,7.4], wb=[45,45,135,135,180];
+  return c.map((cond,i) => ({ datetime: new Date(now + i*86400e3).toISOString(), condition: cond, temperature: hi[i], templow: lo[i], wind_speed: ws[i], wind_bearing: wb[i], precipitation_probability: [70,40,0,60,80][i], uv_index: i===2?2:0 }));
+}
+function hourly() {
+  return Array.from({length: 24}, (_, i) => ({ datetime: new Date(firstHour.getTime() + i*H).toISOString(), condition: i<1 ? 'rainy' : (i<12 ? 'partlycloudy' : 'cloudy'), temperature: 3 + Math.round(Math.sin(i/4)), wind_speed: 14.8, wind_bearing: 45, precipitation_probability: i<3 ? 40 : 0 }));
+}
+
+let cond = 'cloudy', night = false, alertLvl = 'Jaune';
+const card = document.getElementById('card');
+
+function makeHass() {
+  const rise = new Date(); rise.setHours(8,16,0,0); if (rise < new Date()) rise.setDate(rise.getDate()+1);
+  const set = new Date(); set.setHours(16,59,0,0); if (set < new Date()) set.setDate(set.getDate()+1);
+  return {
+    config: { location_name: 'Ma ville', time_zone: 'Europe/Paris' },
+    states: {
+      'weather.demo': { entity_id:'weather.demo', state: cond, attributes: { temperature: 2.6, apparent_temperature: 0.1, humidity: 95, pressure: 1010.9, wind_bearing: 50, wind_speed: 10.8, wind_gust_speed: 0, supported_features: 3, attribution: 'Data provided by Météo-France (démo)' } },
+      'sun.sun': { entity_id:'sun.sun', state: night ? 'below_horizon' : 'above_horizon', attributes: { next_rising: rise.toISOString(), next_setting: set.toISOString() } },
+      'sensor.alerte': { entity_id:'sensor.alerte', state: alertLvl, attributes: { 'Grand-froid': alertLvl, 'Vent violent': 'Vert' } },
+      'sensor.iqa': { entity_id:'sensor.iqa', state: '30', attributes: {} },
+    },
+    connection: {
+      subscribeMessage(cb, msg) { setTimeout(() => cb({ forecast: msg.forecast_type === 'daily' ? daily() : hourly() }), 50); return Promise.resolve(() => {}); },
+    },
+  };
+}
+
+card.setConfig({ entity: 'weather.demo', alert_entity: 'sensor.alerte', aqi_entity: 'sensor.iqa', demo_night: night });
+card.hass = makeHass();
+
+function refresh() {
+  card.setConfig({ entity: 'weather.demo', alert_entity: 'sensor.alerte', aqi_entity: 'sensor.iqa', demo_night: night });
+  card.hass = makeHass();
+  drawBar();
+}
+function drawBar() {
+  const bar = document.getElementById('bar');
+  bar.innerHTML = '';
+  CONDS.forEach(c => { const b = document.createElement('button'); b.textContent = c; if (c===cond) b.className='sel'; b.onclick = () => { cond = c; refresh(); }; bar.appendChild(b); });
+  const n = document.createElement('button'); n.textContent = night ? '🌙 Nuit' : '☀️ Jour'; n.onclick = () => { night = !night; refresh(); }; bar.appendChild(n);
+  const a = document.createElement('button'); a.textContent = 'Vigilance : ' + alertLvl; a.onclick = () => { alertLvl = {Vert:'Jaune',Jaune:'Orange',Orange:'Rouge',Rouge:'Vert'}[alertLvl]; refresh(); }; bar.appendChild(a);
+}
+drawBar();
+</script>
+</body>
+</html>
