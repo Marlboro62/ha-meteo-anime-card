@@ -4,7 +4,7 @@
  * brouillard, orage) qui suit en direct l'état d'une entité weather.*.
  * Aucune dépendance, aucun build : un seul fichier JS.
  */
-const CARD_VERSION = '0.2.0';
+const CARD_VERSION = '0.2.1';
 const QUALITY = { high: 0.6, medium: 0.4, low: 0.28 };
 
 /* ------------------------------------------------------------------ */
@@ -412,7 +412,7 @@ class SkyGL {
     this.scale = 0.4;
     let gl = null;
     try {
-      gl = canvas.getContext('webgl', { alpha: false, antialias: false, depth: false, stencil: false, powerPreference: 'low-power' });
+      gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true, antialias: false, depth: false, stencil: false, powerPreference: 'low-power' });
     } catch (e) {
       gl = null;
     }
@@ -1013,7 +1013,7 @@ function buildScene(cond, night, windKmh) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Styles                                                            */
+/* Styles                                                              */
 /* ------------------------------------------------------------------ */
 
 const STYLE = `
@@ -1031,7 +1031,7 @@ ha-card {
 canvas { width:100%; height:100%; }
 .glsky { position:absolute; inset:0; width:100%; height:100%; display:none; }
 .bg.gl .glsky { display:block; }
-.bg.gl .skywrap, .bg.gl .sun, .bg.gl .moon, .bg.gl .clouds, .bg.gl .fog { display:none; }
+.bg.gl .sun, .bg.gl .moon, .bg.gl .clouds, .bg.gl .fog { display:none; }
 .flash { background: rgb(225,232,255); opacity:0; mix-blend-mode: screen; }
 .shade { background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.12) 45%, rgba(0,0,0,.28) 100%); }
 
@@ -1432,10 +1432,6 @@ class MeteoAnimeCard extends HTMLElement {
   }
 
   _applyScene(s, night) {
-    if (this._fx.sky) {
-      this._fx.setScene(s);
-      return;
-    }
     const n = night ? 1 : 0;
     const wrap = this._root.querySelector('.skywrap');
     const layer = document.createElement('div');

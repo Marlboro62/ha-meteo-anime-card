@@ -14,7 +14,7 @@ Un seul fichier JS, sans dépendance ni build.
 
 1. Copier `meteo-anime-card.js` dans `/config/www/meteo-anime-card/` sur Home Assistant.
 2. *Paramètres → Tableaux de bord → ⋮ → Ressources → Ajouter* :
-   - URL : `/local/meteo-anime-card/meteo-anime-card.js?v=0.1.0`
+   - URL : `/local/meteo-anime-card/meteo-anime-card.js?v=0.2.1`
    - Type : **Module JavaScript**
 3. Recharger le navigateur (ou vider le cache de Fully Kiosk sur la tablette).
 
