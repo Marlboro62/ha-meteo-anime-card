@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carte Météo Animée · démo</title>
+<meta name="description" content="Démonstration de la carte Lovelace Carte Météo Animée : ciel WebGL, pluie, neige, orage, brouillard, avec des données simulées.">
+<style>
+  :root {
+    --bg: #0d1420; --panel: #152033; --line: #26354d; --text: #e7edf5; --muted: #8fa0b8;
+    --accent: #5aa9ff; --btn: #1c2a40; --btn-on: #2f80ed;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 24px 16px 48px; }
+  .top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+  .top svg { width: 46px; height: 46px; flex: none; }
+  h1 { font-size: 1.5rem; margin: 0; line-height: 1.2; }
+  .lead { margin: 2px 0 0; color: var(--muted); }
+  .links { margin-left: auto; display: flex; gap: 14px; font-size: .92rem; flex-wrap: wrap; }
+
+  .grid { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; position: sticky; top: 12px; }
+  @media (max-width: 860px) { .panel { position: static; } }
+  .panel h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 14px 0 8px; font-weight: 600; }
+  .panel h2:first-child { margin-top: 0; }
+  .conds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .conds button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px; font-size: .72rem; }
+  .conds button i { font-size: 22px; line-height: 1; }
+  button { background: var(--btn); color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px;
+    font: inherit; cursor: pointer; }
+  button:hover { border-color: #3b5272; }
+  button.on { background: var(--btn-on); border-color: var(--btn-on); color: #fff; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .row button { flex: 1; }
+  label.line { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: .9rem; margin: 6px 0; }
+  select { background: var(--btn); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: inherit; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .note { color: var(--muted); font-size: .8rem; margin: 12px 0 0; }
+  .stage { min-width: 0; }
+  pre { background: #0a111c; border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; font-size: .82rem; margin: 16px 0 0; }
+</style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <svg viewBox="0 0 48 48" aria-hidden="true">
+      <circle cx="17" cy="17" r="8" fill="#ffc83d"/>
+      <path d="M14 36h22a8 8 0 0 0 0-16 11 11 0 0 0-21-2A8 8 0 0 0 14 36z" fill="#e8eef5"/>
+      <path d="M18 40l-2 4M26 40l-2 4M34 40l-2 4" stroke="#8fd0ff" stroke-width="2.4" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <h1>Carte Météo Animée</h1>
+      <p class="lead">La vraie carte, avec des données simulées : choisissez une météo et regardez le ciel changer.</p>
+    </div>
+    <div class="links">
+      <a href="https://github.com/Marlboro62/ha-meteo-anime-card">GitHub</a>
+      <a href="https://github.com/Marlboro62/ha-meteo-anime-card#installation">Installation</a>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Météo</h2>
+      <div class="conds" id="conds"></div>
+
+      <h2>Moment</h2>
+      <div class="row" id="moment">
+        <button data-m="day">☀️ Jour</button>
+        <button data-m="night">🌙 Nuit</button>
+      </div>
+
+      <h2>Réglages</h2>
+      <label class="line">Vent <span id="windv">11 km/h</span></label>
+      <input type="range" id="wind" min="0" max="90" value="11" aria-label="Vitesse du vent">
+      <label class="line">Vigilance
+        <select id="alert">
+          <option>Vert</option><option selected>Jaune</option><option>Orange</option><option>Rouge</option>
+        </select>
+      </label>
+      <label class="line">Qualité du ciel
+        <select id="quality">
+          <option value="high">Haute</option><option value="medium" selected>Moyenne</option>
+          <option value="low">Basse</option><option value="css">CSS (sans WebGL)</option>
+        </select>
+      </label>
+      <div class="row" style="margin-top:10px">
+        <button id="auto">▶ Défilement auto</button>
+      </div>
+      <p class="note">Le défilement auto correspond à l'option <code>demo: true</code> de la carte : toutes les météos s'enchaînent.</p>
+    </div>
+
+    <div class="stage">
+      <meteo-anime-card id="card"></meteo-anime-card>
+      <pre id="yaml"></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+/* Home Assistant fournit <ha-icon> ; ici, un équivalent simple avec la police MDI. */
+if (!customElements.get('ha-icon')) {
+  const MDI = 'https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css';
+  customElements.define('ha-icon', class extends HTMLElement {
+    static get observedAttributes() { return ['icon']; }
+    connectedCallback() { this.render(); }
+    attributeChangedCallback() { this.render(); }
+    render() {
+      if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
+      const name = String(this.getAttribute('icon') || 'mdi:weather-cloudy').replace(/^mdi:/, '');
+      this.shadowRoot.innerHTML = `<link rel="stylesheet" href="${MDI}"><style>:host{display:inline-flex;align-items:center;justify-content:center;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px)}i{font-size:var(--mdc-icon-size,24px);line-height:1}</style><i class="mdi mdi-${name}"></i>`;
+    }
+  });
+}
+</script>
+<script src="../meteo-anime-card.js"></script>
+<script>
+const CONDS = [
+  ['sunny', 'Soleil', 'weather-sunny'], ['partlycloudy', 'Éclaircies', 'weather-partly-cloudy'],
+  ['cloudy', 'Nuageux', 'weather-cloudy'], ['rainy', 'Pluie', 'weather-rainy'],
+  ['pouring', 'Averses', 'weather-pouring'], ['lightning-rainy', 'Orage', 'weather-lightning-rainy'],
+  ['snowy', 'Neige', 'weather-snowy'], ['snowy-rainy', 'Pluie/neige', 'weather-snowy-rainy'],
+  ['hail', 'Grêle', 'weather-hail'], ['fog', 'Brouillard', 'weather-fog'],
+  ['windy', 'Vent', 'weather-windy'], ['clear-night', 'Nuit claire', 'weather-night'],
+];
+const H = 3600e3;
+const state = { cond: 'rainy', night: false, wind: 11, alert: 'Jaune', quality: 'medium', auto: false };
+const card = document.getElementById('card');
+
+function daily() {
+  const c = ['rainy', 'cloudy', 'sunny', 'snowy', 'partlycloudy'], hi = [8, 6, 9, 2, 7], lo = [3, 1, 0, -2, 1];
+  const now = Date.now();
+  return c.map((cond, i) => ({ datetime: new Date(now + i * 86400e3).toISOString(), condition: cond, temperature: hi[i], templow: lo[i],
+    wind_speed: [14.8, 9.3, 7.4, 18.5, 11.1][i], wind_bearing: [45, 90, 135, 0, 225][i], precipitation_probability: [80, 30, 0, 70, 10][i], uv_index: [1, 1, 2, 0, 2][i] }));
+}
+function hourly() {
+  const start = Math.ceil(Date.now() / H) * H;
+  return Array.from({ length: 24 }, (_, i) => ({ datetime: new Date(start + i * H).toISOString(),
+    condition: i < 5 ? 'rainy' : i < 12 ? 'cloudy' : 'partlycloudy', temperature: Math.round(6 + 2.5 * Math.sin((i - 4) / 4)),
+    wind_speed: 10.8 + (i % 3) * 1.9, wind_bearing: 45, precipitation_probability: i < 5 ? 60 - i * 10 : 0 }));
+}
+function makeHass() {
+  const rise = new Date(); rise.setHours(7, 45, 0, 0); if (rise < new Date()) rise.setDate(rise.getDate() + 1);
+  const set = new Date(); set.setHours(17, 20, 0, 0); if (set < new Date()) set.setDate(set.getDate() + 1);
+  return {
+    config: { location_name: 'Ma ville', time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    states: {
+      'weather.demo': { entity_id: 'weather.demo', state: state.cond, attributes: { temperature: 7.4, apparent_temperature: 4.9, humidity: 82,
+        pressure: 1012.6, wind_bearing: 45, wind_speed: state.wind, wind_gust_speed: state.wind > 30 ? state.wind * 1.6 : 0, uv_index: 1,
+        supported_features: 3, attribution: 'Données simulées (démo)' } },
+      'sun.sun': { entity_id: 'sun.sun', state: state.night ? 'below_horizon' : 'above_horizon',
+        attributes: { next_rising: rise.toISOString(), next_setting: set.toISOString(), elevation: state.night ? -20 : 18, azimuth: state.night ? 300 : 205 } },
+      'sensor.vigilance': { entity_id: 'sensor.vigilance', state: state.alert, attributes: { 'Vent violent': state.alert, 'Pluie-inondation': 'Vert' } },
+      'sensor.iqa': { entity_id: 'sensor.iqa', state: '30', attributes: {} },
+    },
+    connection: {
+      subscribeMessage(cb, msg) {
+        setTimeout(() => cb({ forecast: msg.forecast_type === 'daily' ? daily() : hourly() }), 30);
+        return Promise.resolve(() => {});
+      },
+    },
+  };
+}
+function config() {
+  const c = { type: 'custom:meteo-anime-card', entity: 'weather.demo', alert_entity: 'sensor.vigilance', aqi_entity: 'sensor.iqa' };
+  if (state.auto) c.demo = true;
+  else { c.demo_condition = state.cond; c.demo_night = state.night; }
+  if (state.quality !== 'medium') c.quality = state.quality;
+  return c;
+}
+let lastQuality = null;
+function apply() {
+  // changer la qualité recrée la carte (le rendu WebGL est choisi à la construction)
+  if (lastQuality !== null && lastQuality !== state.quality) {
+    const fresh = document.createElement('meteo-anime-card');
+    fresh.id = 'card';
+    document.getElementById('card').replaceWith(fresh);
+  }
+  lastQuality = state.quality;
+  const el = document.getElementById('card');
+  const { type, ...cfg } = config();
+  el.setConfig(cfg);
+  el.hass = makeHass();
+  document.getElementById('yaml').textContent =
+    Object.entries(config()).map(([k, v]) => `${k}: ${v}`).join('\n').replace('weather.demo', 'weather.ma_ville');
+  renderControls();
+}
+function renderControls() {
+  document.getElementById('conds').innerHTML = CONDS.map(([k, l, i]) =>
+    `<button data-c="${k}" class="${!state.auto && state.cond === k ? 'on' : ''}" aria-pressed="${!state.auto && state.cond === k}"><i class="mdi mdi-${i}"></i>${l}</button>`).join('');
+  document.querySelectorAll('#moment button').forEach((b) => b.classList.toggle('on', !state.auto && (b.dataset.m === 'night') === state.night));
+  const auto = document.getElementById('auto');
+  auto.classList.toggle('on', state.auto);
+  auto.textContent = state.auto ? '⏸ Arrêter le défilement' : '▶ Défilement auto';
+}
+document.getElementById('conds').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  state.cond = b.dataset.c; state.auto = false;
+  if (state.cond === 'clear-night') state.night = true;
+  apply();
+});
+document.getElementById('moment').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  state.night = b.dataset.m === 'night'; state.auto = false; apply();
+});
+document.getElementById('wind').addEventListener('input', (e) => {
+  state.wind = +e.target.value; document.getElementById('windv').textContent = `${state.wind} km/h`; apply();
+});
+document.getElementById('alert').addEventListener('change', (e) => { state.alert = e.target.value; apply(); });
+document.getElementById('quality').addEventListener('change', (e) => { state.quality = e.target.value; apply(); });
+document.getElementById('auto').addEventListener('click', () => { state.auto = !state.auto; apply(); });
+apply();
+</script>
+</body>
+</html>

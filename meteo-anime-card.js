@@ -4,7 +4,7 @@
  * brouillard, orage) qui suit en direct l'état d'une entité weather.*.
  * Aucune dépendance, aucun build : un seul fichier JS.
  */
-const CARD_VERSION = '0.2.4';
+const CARD_VERSION = '0.3.0';
 const QUALITY = { high: 0.6, medium: 0.4, low: 0.28 };
 
 /* ------------------------------------------------------------------ */
@@ -92,6 +92,22 @@ const VIGILANCE = {
   Orange: { color: '#ff8c1a', label: 'orange' },
   Rouge: { color: '#e53935', label: 'rouge' },
 };
+
+/* Mode démo : enchaîne les météos pour montrer toutes les animations */
+const DEMO_SEQ = [
+  ['sunny', false],
+  ['partlycloudy', false],
+  ['cloudy', false],
+  ['rainy', false],
+  ['pouring', false],
+  ['lightning-rainy', true],
+  ['snowy', false],
+  ['snowy-rainy', true],
+  ['fog', false],
+  ['clear-night', true],
+  ['windy', false],
+  ['hail', false],
+];
 
 const DIRS = ['Nord', 'Nord-est', 'Est', 'Sud-est', 'Sud', 'Sud-ouest', 'Ouest', 'Nord-ouest'];
 
@@ -1078,7 +1094,7 @@ canvas { width:100%; height:100%; }
 .bg.gl .glsky { display:block; }
 .bg.gl .sun, .bg.gl .moon, .bg.gl .clouds, .bg.gl .fog { display:none; }
 .flash { background: rgb(225,232,255); opacity:0; mix-blend-mode: screen; }
-.shade { background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.12) 45%, rgba(0,0,0,.28) 100%); }
+.shade { background: linear-gradient(180deg, rgba(0,0,0,.2) 0%, rgba(0,0,0,0) 22%, rgba(0,0,0,.12) 50%, rgba(0,0,0,.28) 100%); }
 
 .sun {
   position:absolute; top:-70px; right:-70px; width:300px; height:300px; border-radius:50%;
@@ -1124,7 +1140,7 @@ canvas { width:100%; height:100%; }
 @keyframes fogmove { from { transform: translateX(-12%); } to { transform: translateX(12%); } }
 
 /* ---- Contenu ---- */
-.content { position:relative; z-index:1; padding: 22px 18px 18px; container-type: inline-size; text-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.content { position:relative; z-index:1; padding: 22px 18px 18px; container-type: inline-size; text-shadow: 0 1px 3px rgba(0,0,0,.45), 0 0 12px rgba(0,0,0,.18); }
 .head { padding: 4px 8px 18px; cursor:pointer; }
 .loc { font-size: 1.25rem; font-weight: 500; opacity:.95; }
 .temp { font-size: 6.2rem; font-weight: 200; line-height: 1; margin: 6px 0 4px; letter-spacing:-2px; }
@@ -1276,13 +1292,15 @@ class MeteoAnimeCard extends HTMLElement {
 
   connectedCallback() {
     if (this._built) {
-      if (this._config.animations !== false) this._fx.start();
+      this._applyCardStyle();
       this._subscribe();
     }
   }
 
   disconnectedCallback() {
     if (this._fx) this._fx.stop();
+    clearInterval(this._demoTimer);
+    clearInterval(this._dbgTimer);
     this._unsubscribe();
   }
 
@@ -1351,6 +1369,14 @@ class MeteoAnimeCard extends HTMLElement {
     const card = this._root.querySelector('ha-card');
     card.style.setProperty('--mac-min-height', this._config.min_height || 'auto');
     this._bg.classList.toggle('static', this._config.animations === false);
+    clearInterval(this._demoTimer);
+    if (this._config.demo && !this._config.demo_condition) {
+      this._demoIdx = this._demoIdx || 0;
+      this._demoTimer = setInterval(() => {
+        this._demoIdx = (this._demoIdx + 1) % DEMO_SEQ.length;
+        this._update();
+      }, Math.max(3, Number(this._config.demo_interval) || 12) * 1000);
+    }
     clearInterval(this._dbgTimer);
     this._root.querySelector('.dbg').textContent = '';
     if (this._config.debug) {
@@ -1454,8 +1480,10 @@ class MeteoAnimeCard extends HTMLElement {
       return;
     }
     const a = st.attributes;
-    const cond = c.demo_condition || st.state;
-    const night = this._isNightNow(cond);
+    let cond = c.demo_condition || st.state;
+    let demoNight = null;
+    if (c.demo && !c.demo_condition) [cond, demoNight] = DEMO_SEQ[this._demoIdx || 0];
+    const night = demoNight ?? this._isNightNow(cond);
 
     const wind = isNum(c.demo_wind) ? c.demo_wind : a.wind_speed;
     const key = `${cond}|${night}|${Math.round((wind || 0) / 15)}`;
@@ -1680,7 +1708,7 @@ if (!customElements.get('meteo-anime-card')) {
   window.customCards = window.customCards || [];
   window.customCards.push({
     type: 'meteo-anime-card',
-    name: 'Météo animée',
+    name: 'Carte Météo Animée',
     description: 'Carte météo avec fond animé qui suit la météo en direct',
     preview: true,
   });
