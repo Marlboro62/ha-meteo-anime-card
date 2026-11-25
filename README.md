@@ -71,7 +71,7 @@ Si la carte n'apparaît pas encore dans la recherche, ajoutez le dépôt à la m
 
 1. Téléchargez [`meteo-anime-card.js`](https://raw.githubusercontent.com/Marlboro62/ha-meteo-anime-card/main/meteo-anime-card.js) (clic droit → Enregistrer sous) et copiez-le dans `/config/www/`.
 2. **Paramètres → Tableaux de bord → ⋮ → Ressources → Ajouter une ressource** :
-   - URL : `/local/meteo-anime-card.js?v=0.3.0`
+   - URL : `/local/meteo-anime-card.js?v=0.4.0`
    - Type : **Module JavaScript**
 3. Rechargez la page (Ctrl+F5).
 
@@ -79,7 +79,7 @@ Si la carte n'apparaît pas encore dans la recherche, ajoutez le dépôt à la m
 
 ## Configuration
 
-La carte s'ajoute depuis l'éditeur de tableau de bord (**Carte Météo Animée** dans la liste des cartes) ou en YAML :
+La carte s'ajoute depuis l'éditeur de tableau de bord (**Carte Météo Animée** dans la liste des cartes). Son **éditeur visuel** propose des menus pour choisir chaque entité (météo, vigilance, qualité de l'air, pollen, UV) et régler l'affichage, l'animation et le mode démo, sans écrire de YAML. En YAML :
 
 ```yaml
 type: custom:meteo-anime-card
@@ -93,7 +93,9 @@ Pour une tablette murale, utilisez une vue de type **Panneau (1 carte)** et ajou
 | --- | --- | --- |
 | `entity` | — (obligatoire) | Entité `weather.*` |
 | `alert_entity` | — | Capteur de vigilance Météo-France (« … Weather alert »). Bandeau affiché en jaune, orange ou rouge |
-| `aqi_entity` | — | Capteur d'indice de qualité de l'air (pastille « IQA ») |
+| `aqi_entity` | — | Capteur de qualité de l'air. Avec **Atmo France** (« Qualité globale »), la pastille affiche le libellé et la couleur officiels (« Air : Moyen ») |
+| `pollen_entity` | — | Capteur pollen (ex. Atmo France « Qualité globale Pollen ») : pastille « Pollen : Très faible » |
+| `uv_entity` | auto | Capteur d'indice UV. Par défaut, la carte prend le capteur `…_uv` créé par Météo-France à côté de l'entité météo |
 | `sun_entity` | `sun.sun` | Jour/nuit, position du soleil, lever/coucher |
 | `name` | nom du domicile | Titre en haut de la carte |
 | `days` / `hours` | `5` / `24` | Nombre de jours / d'heures de prévisions |

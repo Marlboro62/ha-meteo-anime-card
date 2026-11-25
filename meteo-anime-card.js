@@ -4,7 +4,7 @@
  * brouillard, orage) qui suit en direct l'état d'une entité weather.*.
  * Aucune dépendance, aucun build : un seul fichier JS.
  */
-const CARD_VERSION = '0.3.0';
+const CARD_VERSION = '0.4.0';
 const QUALITY = { high: 0.6, medium: 0.4, low: 0.28 };
 
 /* ------------------------------------------------------------------ */
@@ -1149,6 +1149,7 @@ canvas { width:100%; height:100%; }
 .chips { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
 .chip { display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border-radius:999px; background: rgba(255,255,255,.18); font-size:.95rem; font-weight:500; }
 .chip ha-icon { --mdc-icon-size: 18px; }
+.chip .dot { width:10px; height:10px; border-radius:50%; display:inline-block; box-shadow: 0 0 0 2px rgba(255,255,255,.35); }
 
 .panel {
   background: rgba(22,32,46,.30); border: 1px solid rgba(255,255,255,.08);
@@ -1234,11 +1235,23 @@ canvas { width:100%; height:100%; }
 /* ------------------------------------------------------------------ */
 
 class MeteoAnimeCard extends HTMLElement {
+  static getConfigElement() {
+    return document.createElement('meteo-anime-card-editor');
+  }
+
   static getStubConfig(hass) {
     const ids = Object.keys(hass?.states || {});
     const weather = ids.find((e) => e.startsWith('weather.meteo_france')) || ids.find((e) => e.startsWith('weather.')) || 'weather.home';
     const alert = ids.find((e) => e.startsWith('sensor.') && e.endsWith('_weather_alert'));
-    return { entity: weather, ...(alert ? { alert_entity: alert } : {}) };
+    const atmo = ids.filter((e) => e.startsWith('sensor.atmo_france_qualite_globale_') && !e.endsWith('_j_1'));
+    const aqi = atmo.find((e) => !e.includes('_pollen_'));
+    const pollen = atmo.find((e) => e.includes('_pollen_'));
+    return {
+      entity: weather,
+      ...(alert ? { alert_entity: alert } : {}),
+      ...(aqi ? { aqi_entity: aqi } : {}),
+      ...(pollen ? { pollen_entity: pollen } : {}),
+    };
   }
 
   setConfig(config) {
@@ -1276,11 +1289,17 @@ class MeteoAnimeCard extends HTMLElement {
     const sun = hass.states[c.sun_entity];
     const al = c.alert_entity ? hass.states[c.alert_entity] : null;
     const aqi = c.aqi_entity ? hass.states[c.aqi_entity] : null;
-    if (first || st !== this._st || sun !== this._sun || al !== this._al || aqi !== this._aqi) {
+    const pol = c.pollen_entity ? hass.states[c.pollen_entity] : null;
+    // UV : option uv_entity, sinon le capteur « …_uv » que crée Météo-France à côté de l'entité météo
+    const uvId = c.uv_entity || `sensor.${String(c.entity).split('.')[1]}_uv`;
+    const uv = hass.states[uvId] || null;
+    if (first || st !== this._st || sun !== this._sun || al !== this._al || aqi !== this._aqi || pol !== this._pol || uv !== this._uvSt) {
       this._st = st;
       this._sun = sun;
       this._al = al;
       this._aqi = aqi;
+      this._pol = pol;
+      this._uvSt = uv;
       this._update();
     }
     this._subscribe();
@@ -1556,9 +1575,18 @@ class MeteoAnimeCard extends HTMLElement {
     const name = c.name ?? this._hass.config?.location_name ?? a.friendly_name;
     const range = today && isNum(today.temperature) ? ` ${r0(today.temperature)}°/${r0(today.templow)}°` : '';
     let chips = '';
-    if (this._aqi) {
-      chips += `<span class="chip"><ha-icon icon="mdi:leaf"></ha-icon>IQA ${esc(this._aqi.state)}</span>`;
-    }
+    // pastilles : libellé et couleur officiels quand le capteur les fournit (Atmo France)
+    const chip = (s, icon, label, labelNum) => {
+      if (!s || s.state === 'unknown' || s.state === 'unavailable') return '';
+      const at = s.attributes || {};
+      const lib = at['Libellé'] ?? at.label;
+      const col = at['Couleur'] ?? at.color;
+      const txt = lib ? `${label} : ${lib}` : `${labelNum} ${s.state}`;
+      const mark = col && /^#[0-9a-f]{3,8}$/i.test(col) ? `<i class="dot" style="background:${col}"></i>` : `<ha-icon icon="${icon}"></ha-icon>`;
+      return `<span class="chip">${mark}${esc(txt)}</span>`;
+    };
+    chips += chip(this._aqi, 'mdi:leaf', 'Air', 'IQA');
+    chips += chip(this._pol, 'mdi:flower-pollen', 'Pollen', 'Pollen');
     return `<div class="head" data-more>
       <div class="loc">${esc(name)}</div>
       <div class="temp">${r0(a.temperature)}<span class="deg">°</span></div>
@@ -1669,7 +1697,8 @@ class MeteoAnimeCard extends HTMLElement {
   }
 
   _renderTiles(a, today, sunT, night) {
-    const uv = isNum(a.uv_index) ? a.uv_index : today?.uv_index;
+    const uvSensor = this._uvSt ? parseFloat(this._uvSt.state) : NaN;
+    const uv = isNum(uvSensor) ? uvSensor : isNum(a.uv_index) ? a.uv_index : today?.uv_index;
     const hum = a.humidity;
     const feels = isNum(a.apparent_temperature) ? a.apparent_temperature : windChill(a.temperature, a.wind_speed);
     const pres = a.pressure;
@@ -1702,6 +1731,190 @@ class MeteoAnimeCard extends HTMLElement {
     return `<div class="tiles">${tiles.join('')}</div>`;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Éditeur visuel (menus de choix des entités et options)              */
+/* ------------------------------------------------------------------ */
+
+const EDITOR_DEFAULTS = {
+  sun_entity: 'sun.sun',
+  days: 5,
+  hours: 24,
+  show_daily: true,
+  show_hourly: true,
+  show_tiles: true,
+  show_attribution: true,
+  animations: true,
+  quality: 'medium',
+  fps: 30,
+  demo: false,
+  demo_interval: 12,
+  debug: false,
+};
+
+const EDITOR_LABELS = {
+  entity: 'Entité météo',
+  name: 'Titre (par défaut : nom du domicile)',
+  alert_entity: 'Vigilance Météo-France',
+  aqi_entity: 'Qualité de l’air',
+  pollen_entity: 'Pollen',
+  uv_entity: 'Indice UV',
+  sun_entity: 'Soleil',
+  show_daily: 'Prévisions sur plusieurs jours',
+  show_hourly: 'Prévisions heure par heure',
+  show_tiles: 'Tuiles (UV, humidité, vent…)',
+  show_attribution: 'Source des données',
+  days: 'Nombre de jours',
+  hours: 'Nombre d’heures',
+  min_height: 'Hauteur minimale (ex. 100vh pour remplir l’écran)',
+  animations: 'Fond animé',
+  quality: 'Qualité du ciel',
+  fps: 'Images par seconde',
+  demo: 'Mode démo (enchaîne toutes les météos)',
+  demo_interval: 'Durée de chaque météo en démo (s)',
+  demo_condition: 'Forcer une météo',
+  demo_night: 'Forcer la nuit',
+  debug: 'Diagnostic (mode de rendu, images/s)',
+};
+
+const EDITOR_HELPERS = {
+  alert_entity: 'Capteur « … Weather alert » de Météo-France',
+  aqi_entity: 'Ex. Atmo France « Qualité globale »',
+  pollen_entity: 'Ex. Atmo France « Qualité globale Pollen »',
+  uv_entity: 'Vide : capteur « …_uv » de Météo-France trouvé automatiquement',
+};
+
+const EDITOR_SCHEMA = [
+  { name: 'entity', required: true, selector: { entity: { domain: 'weather' } } },
+  { name: 'name', selector: { text: {} } },
+  {
+    type: 'expandable', name: '', flatten: true, title: 'Capteurs complémentaires', icon: 'mdi:tune-variant',
+    schema: [
+      { name: 'alert_entity', selector: { entity: { domain: 'sensor' } } },
+      { name: 'aqi_entity', selector: { entity: { domain: 'sensor' } } },
+      { name: 'pollen_entity', selector: { entity: { domain: 'sensor' } } },
+      { name: 'uv_entity', selector: { entity: { domain: 'sensor' } } },
+      { name: 'sun_entity', selector: { entity: { domain: 'sun' } } },
+    ],
+  },
+  {
+    type: 'expandable', name: '', flatten: true, title: 'Affichage', icon: 'mdi:view-dashboard-outline',
+    schema: [
+      {
+        type: 'grid', name: '', flatten: true, schema: [
+          { name: 'show_daily', selector: { boolean: {} } },
+          { name: 'show_hourly', selector: { boolean: {} } },
+          { name: 'show_tiles', selector: { boolean: {} } },
+          { name: 'show_attribution', selector: { boolean: {} } },
+        ],
+      },
+      {
+        type: 'grid', name: '', flatten: true, schema: [
+          { name: 'days', selector: { number: { min: 1, max: 10, mode: 'box' } } },
+          { name: 'hours', selector: { number: { min: 6, max: 48, mode: 'box' } } },
+        ],
+      },
+      { name: 'min_height', selector: { text: {} } },
+    ],
+  },
+  {
+    type: 'expandable', name: '', flatten: true, title: 'Animation', icon: 'mdi:weather-lightning-rainy',
+    schema: [
+      { name: 'animations', selector: { boolean: {} } },
+      {
+        name: 'quality',
+        selector: {
+          select: {
+            mode: 'dropdown',
+            options: [
+              { value: 'high', label: 'Haute' },
+              { value: 'medium', label: 'Moyenne' },
+              { value: 'low', label: 'Basse (tablettes anciennes)' },
+              { value: 'css', label: 'CSS, sans WebGL (très léger)' },
+            ],
+          },
+        },
+      },
+      { name: 'fps', selector: { number: { min: 10, max: 60, step: 5, mode: 'slider' } } },
+    ],
+  },
+  {
+    type: 'expandable', name: '', flatten: true, title: 'Démo et diagnostic', icon: 'mdi:play-circle-outline',
+    schema: [
+      { name: 'demo', selector: { boolean: {} } },
+      { name: 'demo_interval', selector: { number: { min: 3, max: 120, mode: 'box', unit_of_measurement: 's' } } },
+      {
+        name: 'demo_condition',
+        selector: {
+          select: {
+            mode: 'dropdown',
+            options: [{ value: '', label: 'Aucune (météo en direct)' }].concat(
+              DEMO_SEQ.map(([k]) => ({ value: k, label: CONDITIONS_FR[k] || k })),
+            ),
+          },
+        },
+      },
+      { name: 'demo_night', selector: { boolean: {} } },
+      { name: 'debug', selector: { boolean: {} } },
+    ],
+  },
+];
+
+class MeteoAnimeCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+
+  async _ensureForm() {
+    if (customElements.get('ha-form')) return;
+    // ha-form est chargé à la demande par Home Assistant : on force son chargement
+    try {
+      const helpers = await window.loadCardHelpers?.();
+      const card = await helpers?.createCardElement({ type: 'entities', entities: [] });
+      await card?.constructor?.getConfigElement?.();
+    } catch (e) {
+      /* rien : ha-form finit par être défini par l'éditeur de HA */
+    }
+    await customElements.whenDefined('ha-form');
+  }
+
+  async _render() {
+    if (!this._hass || !this._config) return;
+    if (!this._form) {
+      if (this._loading) return;
+      this._loading = true;
+      await this._ensureForm();
+      this._form = document.createElement('ha-form');
+      this._form.computeLabel = (s) => EDITOR_LABELS[s.name] ?? s.name;
+      this._form.computeHelper = (s) => EDITOR_HELPERS[s.name];
+      this._form.addEventListener('value-changed', (ev) => this._changed(ev.detail.value));
+      this.appendChild(this._form);
+    }
+    this._form.hass = this._hass;
+    this._form.schema = EDITOR_SCHEMA;
+    this._form.data = { ...EDITOR_DEFAULTS, demo_condition: '', ...this._config };
+  }
+
+  _changed(value) {
+    const cfg = { ...this._config, ...value };
+    // on garde un YAML propre : pas de valeurs vides ni de valeurs par défaut
+    for (const k of Object.keys(cfg)) {
+      if (cfg[k] === '' || cfg[k] === null || cfg[k] === undefined) delete cfg[k];
+      else if (k in EDITOR_DEFAULTS && cfg[k] === EDITOR_DEFAULTS[k]) delete cfg[k];
+    }
+    if (cfg.demo_night === false) delete cfg.demo_night;
+    this._config = cfg;
+    this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: cfg }, bubbles: true, composed: true }));
+  }
+}
+
+if (!customElements.get('meteo-anime-card-editor')) customElements.define('meteo-anime-card-editor', MeteoAnimeCardEditor);
 
 if (!customElements.get('meteo-anime-card')) {
   customElements.define('meteo-anime-card', MeteoAnimeCard);

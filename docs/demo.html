@@ -158,7 +158,8 @@ function makeHass() {
       'sun.sun': { entity_id: 'sun.sun', state: state.night ? 'below_horizon' : 'above_horizon',
         attributes: { next_rising: rise.toISOString(), next_setting: set.toISOString(), elevation: state.night ? -20 : 18, azimuth: state.night ? 300 : 205 } },
       'sensor.vigilance': { entity_id: 'sensor.vigilance', state: state.alert, attributes: { 'Vent violent': state.alert, 'Pluie-inondation': 'Vert' } },
-      'sensor.iqa': { entity_id: 'sensor.iqa', state: '30', attributes: {} },
+      'sensor.iqa': { entity_id: 'sensor.iqa', state: '2', attributes: { 'Libellé': 'Moyen', 'Couleur': '#50ccaa' } },
+      'sensor.pollen': { entity_id: 'sensor.pollen', state: '1', attributes: { 'Libellé': 'Très faible', 'Couleur': '#50f0e6' } },
     },
     connection: {
       subscribeMessage(cb, msg) {
@@ -169,7 +170,7 @@ function makeHass() {
   };
 }
 function config() {
-  const c = { type: 'custom:meteo-anime-card', entity: 'weather.demo', alert_entity: 'sensor.vigilance', aqi_entity: 'sensor.iqa' };
+  const c = { type: 'custom:meteo-anime-card', entity: 'weather.demo', alert_entity: 'sensor.vigilance', aqi_entity: 'sensor.iqa', pollen_entity: 'sensor.pollen' };
   if (state.auto) c.demo = true;
   else { c.demo_condition = state.cond; c.demo_night = state.night; }
   if (state.quality !== 'medium') c.quality = state.quality;
