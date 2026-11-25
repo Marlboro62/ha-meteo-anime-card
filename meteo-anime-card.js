@@ -4,7 +4,7 @@
  * brouillard, orage) qui suit en direct l'état d'une entité weather.*.
  * Aucune dépendance, aucun build : un seul fichier JS.
  */
-const CARD_VERSION = '0.2.2';
+const CARD_VERSION = '0.2.4';
 const QUALITY = { high: 0.6, medium: 0.4, low: 0.28 };
 
 /* ------------------------------------------------------------------ */
@@ -818,7 +818,12 @@ class WeatherFx {
     const dt = this.last ? Math.min(0.1, (ts - this.last) / 1000) : 0;
     this.last = ts;
     this.t = ts / 1000;
-    this._frame(this.t, dt);
+    try {
+      this._frame(this.t, dt);
+    } catch (e) {
+      if (!this.lastError) console.error('meteo-anime-card:', e);
+      this.lastError = String(e && e.message ? e.message : e).slice(0, 120);
+    }
   }
 
   _frame(t, dt) {
@@ -1192,7 +1197,7 @@ canvas { width:100%; height:100%; }
 .sunarc .sun-dot { fill:#ffd45a; filter: drop-shadow(0 0 4px rgba(255,212,90,.9)); }
 .sunt { display:flex; justify-content:space-between; font-size:.72rem; opacity:.85; }
 
-.dbg { position:absolute; right:8px; bottom:6px; z-index:2; font-size:11px; color:#fff; background:rgba(0,0,0,.55); padding:3px 8px; border-radius:6px; pointer-events:none; }
+.dbg { position:absolute; right:8px; top:8px; z-index:2; font-size:11px; color:#fff; background:rgba(0,0,0,.55); padding:3px 8px; border-radius:6px; pointer-events:none; }
 .dbg:empty { display:none; }
 .err { padding: 16px; background: #b3261e; color:#fff; }
 .foot { text-align:center; font-size:.75rem; opacity:.6; margin-top: 6px; }
@@ -1298,8 +1303,8 @@ class MeteoAnimeCard extends HTMLElement {
       <style>${STYLE}</style>
       <ha-card>
         <div class="bg">
-          <canvas class="glsky"></canvas>
           <div class="skywrap"></div>
+          <canvas class="glsky"></canvas>
           <div class="sun"></div>
           <div class="moon"></div>
           <div class="clouds"></div>
@@ -1351,7 +1356,7 @@ class MeteoAnimeCard extends HTMLElement {
     if (this._config.debug) {
       this._dbgTimer = setInterval(() => {
         const fx = this._fx;
-        this._root.querySelector('.dbg').textContent = `v${CARD_VERSION} · ${fx.sky ? 'WebGL · ' + fx.renderer : 'CSS · ' + (fx.reason || '?')} · ${fx.running ? fx.fpsShown + ' img/s' : 'animation arrêtée'}`;
+        this._root.querySelector('.dbg').textContent = `v${CARD_VERSION} · ${fx.sky ? 'WebGL · ' + fx.renderer : 'CSS · ' + (fx.reason || '?')} · ${fx.running ? fx.fpsShown + ' img/s' : 'animation arrêtée'} · ${Math.round(fx.w)}×${Math.round(fx.h)}${fx.sky ? ' · ' + fx.sky.frames + ' images ciel' : ''}${fx.lastError ? ' · ERREUR : ' + fx.lastError : ''}`;
       }, 1000);
     }
     if (this._config.animations === false) this._fx.stop();
