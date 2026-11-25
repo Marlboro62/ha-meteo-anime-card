@@ -1,6 +1,10 @@
 # Météo animée — carte Home Assistant
 
-Carte Lovelace inspirée de l'appli météo des tablettes Android : **le fond s'anime selon la météo en direct** (ciel jour/nuit, soleil, lune et étoiles, nuages qui défilent à la vitesse du vent, pluie, averses, neige, grêle, brouillard, éclairs).
+Carte Lovelace inspirée de l'appli météo des tablettes Android : **le fond s'anime selon la météo en direct**.
+
+- **Ciel en WebGL** : nuages volumétriques générés en temps réel, éclairés par le soleil (placé selon sa vraie position via `sun.sun`), lueurs d'aube et de crépuscule, lune texturée et étoiles qui scintillent, brouillard qui dérive. Les changements de météo se font en fondu progressif.
+- **Particules** : pluie sur trois plans de profondeur avec éclaboussures, gouttes qui se posent et glissent sur la vitre, neige en bokeh, grêle qui rebondit, éclairs ramifiés qui illuminent les nuages de l'intérieur.
+- Si le WebGL n'est pas disponible (ou si le GPU décroche), la carte repasse automatiquement en rendu CSS léger.
 
 Contenu : température actuelle, vigilance Météo-France, prévisions sur 5 jours avec barres min/max, courbe sur 24 h, tuiles UV / humidité / ressenti / vent (rose des vents) / lever-coucher du soleil / pression.
 
@@ -36,6 +40,7 @@ name: Ma ville
 | `show_daily` / `show_hourly` / `show_tiles` | `true` | Afficher chaque bloc |
 | `show_attribution` | `true` | Ligne « Data provided by… » |
 | `animations` | `true` | `false` = fond figé (économie batterie) |
+| `quality` | `medium` | Rendu du ciel WebGL : `high`, `medium`, `low`, ou `css` (ancien rendu léger, sans WebGL) |
 | `fps` | `30` | Images/s du canvas (pluie, neige…) |
 | `min_height` | `auto` | Ex. `100vh` pour remplir l'écran de la tablette |
 | `demo_condition` | — | Forcer une météo pour tester (`rainy`, `snowy`, `lightning-rainy`…) |

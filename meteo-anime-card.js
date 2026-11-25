@@ -4,7 +4,8 @@
  * brouillard, orage) qui suit en direct l'état d'une entité weather.*.
  * Aucune dépendance, aucun build : un seul fichier JS.
  */
-const CARD_VERSION = '0.1.0';
+const CARD_VERSION = '0.2.0';
+const QUALITY = { high: 0.6, medium: 0.4, low: 0.28 };
 
 /* ------------------------------------------------------------------ */
 /* Données de référence                                                */
@@ -240,26 +241,396 @@ function sunArc(frac) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Moteur d'animation (canvas) : pluie, neige, grêle, étoiles, éclairs */
+/* Ciel WebGL : nuages volumétriques, soleil, lune, étoiles, brouillard */
 /* ------------------------------------------------------------------ */
 
+const SKY_VERT = 'attribute vec2 a;void main(){gl_Position=vec4(a,0.0,1.0);}';
+
+const SKY_FRAG = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+uniform vec2 uRes;
+uniform float uUnit;
+uniform float uTime;
+uniform float uDrift;
+uniform vec3 uSkyTop;
+uniform vec3 uSkyBot;
+uniform vec3 uLit;
+uniform vec3 uShadow;
+uniform vec3 uFogCol;
+uniform float uCover;
+uniform float uDark;
+uniform float uFog;
+uniform float uSunVis;
+uniform float uMoonVis;
+uniform float uStars;
+uniform vec2 uSun;
+uniform vec2 uMoon;
+uniform float uFlash;
+uniform vec2 uFlashPos;
+
+float hash(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+float noise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+             mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+const mat2 M = mat2(1.6, 1.2, -1.2, 1.6);
+float fbm(vec2 p) {
+  float v = 0.0; float a = 0.5;
+  for (int i = 0; i < 5; i++) { v += a * noise(p); p = M * p; a *= 0.5; }
+  return v;
+}
+float fbm3(vec2 p) {
+  float v = 0.0; float a = 0.5;
+  for (int i = 0; i < 3; i++) { v += a * noise(p); p = M * p; a *= 0.5; }
+  return v;
+}
+float cloudN(vec2 p, float t) {
+  vec2 q = vec2(fbm3(p + vec2(0.0, t * 0.05)), fbm3(p + vec2(5.2, 1.3) - vec2(0.0, t * 0.04)));
+  return fbm(p + 1.1 * q);
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+  vec2 p = gl_FragCoord.xy / uUnit;
+  vec3 col = mix(uSkyBot, uSkyTop, smoothstep(0.0, 1.0, uv.y));
+
+  if (uStars > 0.01) {
+    vec2 g = p * 70.0;
+    vec2 id = floor(g);
+    float h = hash(id);
+    if (h > 0.972) {
+      vec2 f = fract(g) - 0.5 - (vec2(hash(id + 1.7), hash(id + 3.1)) - 0.5) * 0.6;
+      float tw = 0.55 + 0.45 * sin(uTime * (1.0 + h * 4.0) + h * 50.0);
+      col += vec3(0.9, 0.95, 1.0) * smoothstep(0.1, 0.0, length(f)) * tw * uStars * smoothstep(0.2, 0.7, uv.y);
+    }
+  }
+
+  vec2 mp = uMoon;
+  float md = length(p - mp);
+  if (uMoonVis > 0.01) {
+    col += uMoonVis * vec3(0.55, 0.62, 0.8) * 0.22 * exp(-md * 7.0);
+    float disk = smoothstep(0.042, 0.037, md);
+    float tex = 0.8 + 0.2 * fbm((p - mp) * 30.0 + 3.0);
+    col = mix(col, vec3(0.96, 0.94, 0.86) * tex, disk * uMoonVis);
+  }
+
+  vec2 sp = uSun;
+  float sd = length(p - sp);
+  col += uSunVis * (vec3(1.0, 0.97, 0.9) * smoothstep(0.045, 0.032, sd)
+       + vec3(1.0, 0.85, 0.6) * 0.30 * exp(-sd * 3.5)
+       + vec3(1.0, 0.92, 0.75) * 0.40 * exp(-sd * 14.0));
+
+  float t = uTime;
+  vec2 cp = p * vec2(1.3, 2.1);
+  float cov = clamp(uCover * (0.8 + 0.3 * uv.y), 0.0, 1.0);
+  float th = mix(0.86, 0.1, cov);
+  float nFar = cloudN(cp * 1.6 + vec2(uDrift * 0.55, 7.0), t);
+  float thF = mix(0.86, 0.1, cov * 0.92);
+  float dFar = smoothstep(thF, thF + 0.3, nFar);
+  vec2 np = cp + vec2(uDrift, 0.0);
+  float nNear = cloudN(np, t * 1.3);
+  float dNear = smoothstep(th, th + 0.28, nNear);
+  vec2 lp = (uSunVis > uMoonVis) ? sp : mp;
+  vec2 toL = normalize(lp - p + vec2(0.0001)) * 0.05;
+  float nL = cloudN(np + toL * vec2(1.3, 2.1), t * 1.3);
+  float dLight = smoothstep(th, th + 0.28, nL);
+  float sh = clamp(0.32 + (nL - nNear) * 4.5 + uDark * 0.45 + (1.0 - uv.y) * 0.15 * uDark, 0.0, 1.0);
+
+  vec3 farC = mix(uLit, uShadow, 0.3 + uDark * 0.4) * (0.85 + 0.3 * nFar);
+  col = mix(col, mix(farC, col, 0.2), dFar * 0.85);
+  vec3 nearC = mix(uLit, uShadow, sh) * (0.8 + 0.4 * nNear);
+  nearC += uSunVis * vec3(1.0, 0.88, 0.65) * 0.5 * exp(-sd * 4.0) * (1.0 - dLight);
+  nearC += uMoonVis * vec3(0.6, 0.68, 0.85) * 0.25 * exp(-md * 5.0) * (1.0 - dLight);
+  col = mix(col, nearC, dNear);
+
+  vec2 fp = uFlashPos;
+  col += uFlash * vec3(0.75, 0.8, 1.0) * (0.2 + 1.0 * max(dNear, dFar)) * exp(-length(p - fp) * 1.6);
+
+  if (uFog > 0.01) {
+    float f = fbm(p * vec2(1.4, 3.5) + vec2(uDrift * 0.6, t * 0.01));
+    float amt = uFog * clamp(0.35 + (1.0 - uv.y) * 0.75, 0.0, 1.0) * (0.55 + 0.6 * f);
+    col = mix(col, uFogCol, clamp(amt, 0.0, 0.95));
+  }
+
+  col += (hash(gl_FragCoord.xy + fract(uTime)) - 0.5) / 255.0;
+  gl_FragColor = vec4(col, 1.0);
+}`;
+
+/* Palettes du ciel WebGL : d = jour, n = nuit */
+const GLP = {
+  clear: {
+    d: { top: [0.16, 0.42, 0.84], bot: [0.6, 0.79, 0.95], lit: [1, 1, 1], sh: [0.62, 0.68, 0.78], cover: 0.22, dark: 0 },
+    n: { top: [0.015, 0.025, 0.07], bot: [0.07, 0.1, 0.2], lit: [0.2, 0.23, 0.3], sh: [0.05, 0.06, 0.09], cover: 0.1, dark: 0.2 },
+  },
+  partly: {
+    d: { top: [0.22, 0.46, 0.8], bot: [0.64, 0.77, 0.9], lit: [1, 1, 1], sh: [0.55, 0.6, 0.7], cover: 0.56, dark: 0.05 },
+    n: { top: [0.02, 0.03, 0.08], bot: [0.08, 0.1, 0.18], lit: [0.22, 0.25, 0.32], sh: [0.05, 0.06, 0.09], cover: 0.52, dark: 0.2 },
+  },
+  cloudy: {
+    d: { top: [0.42, 0.5, 0.58], bot: [0.68, 0.72, 0.77], lit: [0.88, 0.9, 0.93], sh: [0.46, 0.5, 0.57], cover: 0.88, dark: 0.3 },
+    n: { top: [0.04, 0.05, 0.07], bot: [0.11, 0.12, 0.16], lit: [0.2, 0.22, 0.27], sh: [0.06, 0.07, 0.09], cover: 0.88, dark: 0.3 },
+  },
+  rain: {
+    d: { top: [0.3, 0.36, 0.43], bot: [0.52, 0.57, 0.63], lit: [0.66, 0.7, 0.75], sh: [0.3, 0.33, 0.38], cover: 0.96, dark: 0.55 },
+    n: { top: [0.03, 0.04, 0.05], bot: [0.09, 0.1, 0.13], lit: [0.16, 0.18, 0.22], sh: [0.04, 0.05, 0.06], cover: 0.96, dark: 0.5 },
+  },
+  storm: {
+    d: { top: [0.15, 0.18, 0.23], bot: [0.33, 0.37, 0.43], lit: [0.46, 0.49, 0.54], sh: [0.14, 0.16, 0.2], cover: 1, dark: 0.8 },
+    n: { top: [0.02, 0.02, 0.03], bot: [0.06, 0.07, 0.09], lit: [0.12, 0.13, 0.16], sh: [0.02, 0.03, 0.04], cover: 1, dark: 0.7 },
+  },
+  snow: {
+    d: { top: [0.55, 0.62, 0.7], bot: [0.84, 0.87, 0.9], lit: [0.94, 0.95, 0.97], sh: [0.62, 0.66, 0.72], cover: 0.92, dark: 0.25 },
+    n: { top: [0.08, 0.1, 0.14], bot: [0.2, 0.23, 0.29], lit: [0.3, 0.33, 0.4], sh: [0.12, 0.14, 0.18], cover: 0.92, dark: 0.3 },
+  },
+  fog: {
+    d: { top: [0.6, 0.64, 0.68], bot: [0.8, 0.82, 0.84], lit: [0.88, 0.89, 0.9], sh: [0.62, 0.65, 0.68], cover: 0.55, dark: 0.2 },
+    n: { top: [0.06, 0.07, 0.08], bot: [0.14, 0.15, 0.17], lit: [0.2, 0.21, 0.23], sh: [0.09, 0.1, 0.11], cover: 0.55, dark: 0.3 },
+  },
+};
+
+const lerp = (a, b, k) => a + (b - a) * k;
+
+class SkyGL {
+  constructor(canvas) {
+    this.c = canvas;
+    this.cur = null;
+    this.tgt = null;
+    this.drift = Math.random() * 50;
+    this.flash = 0;
+    this.flashPos = [0.5, 60];
+    this.scale = 0.4;
+    let gl = null;
+    try {
+      gl = canvas.getContext('webgl', { alpha: false, antialias: false, depth: false, stencil: false, powerPreference: 'low-power' });
+    } catch (e) {
+      gl = null;
+    }
+    this.ok = !!gl && this._init(gl);
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.ok = false;
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.ok = this._init(this.gl);
+    });
+  }
+
+  _init(gl) {
+    this.gl = gl;
+    const sh = (type, src) => {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        console.warn('meteo-anime-card: shader', gl.getShaderInfoLog(s));
+        return null;
+      }
+      return s;
+    };
+    const vs = sh(gl.VERTEX_SHADER, SKY_VERT);
+    const fs = sh(gl.FRAGMENT_SHADER, SKY_FRAG);
+    if (!vs || !fs) return false;
+    const pr = gl.createProgram();
+    gl.attachShader(pr, vs);
+    gl.attachShader(pr, fs);
+    gl.linkProgram(pr);
+    if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) {
+      console.warn('meteo-anime-card: link', gl.getProgramInfoLog(pr));
+      return false;
+    }
+    gl.useProgram(pr);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(pr, 'a');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    this.u = {};
+    ['uRes', 'uUnit', 'uTime', 'uDrift', 'uSkyTop', 'uSkyBot', 'uLit', 'uShadow', 'uFogCol', 'uCover', 'uDark', 'uFog', 'uSunVis', 'uMoonVis', 'uStars', 'uSun', 'uMoon', 'uFlash', 'uFlashPos'].forEach(
+      (n) => (this.u[n] = gl.getUniformLocation(pr, n)),
+    );
+    if (this.w) this.resize(this.w, this.h, this.scale);
+    return true;
+  }
+
+  resize(w, h, scale) {
+    this.w = w;
+    this.h = h;
+    this.scale = scale;
+    this.c.width = Math.max(1, Math.round(w * scale));
+    this.c.height = Math.max(1, Math.round(h * scale));
+    if (this.ok) this.gl.viewport(0, 0, this.c.width, this.c.height);
+  }
+
+  setTarget(p, instant) {
+    this.tgt = p;
+    if (!this.cur || instant) this.cur = JSON.parse(JSON.stringify(p));
+  }
+
+  render(t, dt) {
+    if (!this.ok || !this.cur) return;
+    const k = 1 - Math.exp(-dt * 0.7);
+    const c = this.cur;
+    for (const key of Object.keys(this.tgt)) {
+      const v = this.tgt[key];
+      if (Array.isArray(v)) c[key] = c[key].map((x, i) => lerp(x, v[i], k));
+      else c[key] = lerp(c[key], v, k);
+    }
+    this.drift += dt * c.wind * 0.012;
+    if (this.drift > 200) this.drift -= 200;
+    const gl = this.gl;
+    const u = this.u;
+    gl.uniform2f(u.uRes, this.c.width, this.c.height);
+    // unité : 700 px CSS ; positions calées sur le haut de la carte
+    const W = this.w || 1;
+    const H = this.h || 1;
+    const toP = (xf, topPx) => [(xf * W) / 700, (H - topPx) / 700];
+    gl.uniform1f(u.uUnit, (700 * this.c.height) / H);
+    gl.uniform1f(u.uTime, t % 1000);
+    gl.uniform1f(u.uDrift, this.drift);
+    gl.uniform3fv(u.uSkyTop, c.top);
+    gl.uniform3fv(u.uSkyBot, c.bot);
+    gl.uniform3fv(u.uLit, c.lit);
+    gl.uniform3fv(u.uShadow, c.sh);
+    gl.uniform3fv(u.uFogCol, c.fogCol);
+    gl.uniform1f(u.uCover, c.cover);
+    gl.uniform1f(u.uDark, c.dark);
+    gl.uniform1f(u.uFog, c.fog);
+    gl.uniform1f(u.uSunVis, c.sunVis);
+    gl.uniform1f(u.uMoonVis, c.moonVis);
+    gl.uniform1f(u.uStars, c.stars);
+    gl.uniform2fv(u.uSun, toP(c.sun[0], 55 + (1 - c.sun[1]) * 175));
+    gl.uniform2fv(u.uMoon, toP(c.moon[0], 85));
+    gl.uniform1f(u.uFlash, this.flash);
+    gl.uniform2fv(u.uFlashPos, toP(this.flashPos[0], this.flashPos[1]));
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+}
+
+/* Paramètres du ciel WebGL pour une météo donnée */
+function skyParams(cond, night, windKmh, sun) {
+  const s = buildScene(cond, night, windKmh);
+  const pal = GLP[s.sky][night ? 'n' : 'd'];
+  const elev = sun && isNum(sun.elevation) ? sun.elevation : night ? -20 : 30;
+  const az = sun && isNum(sun.azimuth) ? sun.azimuth : 200;
+  const clearish = s.sky === 'clear' || s.sky === 'partly';
+  const sunUp = clamp((elev + 2) / 6, 0, 1);
+  let bot = pal.bot;
+  // lumière rasante de l'aube et du crépuscule
+  const twi = clearish && elev > -6 && elev < 8 ? 1 - Math.abs(elev - 1) / 7 : 0;
+  if (twi > 0) bot = bot.map((v, i) => lerp(v, [0.98, 0.62, 0.42][i], clamp(twi, 0, 1) * 0.75));
+  const wind = (0.6 + (isNum(windKmh) ? windKmh : 0) / 20) * (cond === 'windy' || cond === 'windy-variant' ? 2 : 1);
+  const fog = { fog: 0.85, rainy: 0.12, pouring: 0.3, 'lightning-rainy': 0.2, snowy: 0.2, 'snowy-rainy': 0.25, hail: 0.15 }[cond] || 0;
+  return {
+    top: pal.top,
+    bot,
+    lit: pal.lit,
+    sh: pal.sh,
+    fogCol: night ? [0.18, 0.19, 0.22] : [0.86, 0.88, 0.89],
+    cover: pal.cover,
+    dark: pal.dark,
+    fog,
+    sunVis: night ? 0 : (clearish ? 1 : s.sky === 'cloudy' ? 0.5 : 0.2) * sunUp,
+    moonVis: night ? (clearish ? 1 : s.sky === 'cloudy' ? 0.5 : 0) : 0,
+    stars: night ? (s.sky === 'clear' ? 1 : s.sky === 'partly' ? 0.8 : s.sky === 'cloudy' ? 0.3 : 0) : 0,
+    sun: [clamp((az - 90) / 180, 0.08, 0.92), clamp(elev / 50, 0, 1)],
+    moon: [0.78, 0],
+    wind,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Particules (canvas 2D) : pluie, gouttes sur la vitre, neige, éclairs */
+/* ------------------------------------------------------------------ */
+
+function makeSprite(size, draw) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  draw(c.getContext('2d'), size);
+  return c;
+}
+
+const RAIN_LAYERS = [
+  { len: 9, sp: 520, a: 0.13, w: 0.6, share: 0.5 },
+  { len: 17, sp: 780, a: 0.22, w: 1, share: 0.32 },
+  { len: 32, sp: 1100, a: 0.32, w: 1.6, share: 0.18 },
+];
+const SNOW_LAYERS = [
+  { r: 1.1, sp: 22, a: 0.55, amp: 6, share: 0.5 },
+  { r: 2.3, sp: 40, a: 0.8, amp: 14, share: 0.35 },
+  { r: 5, sp: 70, a: 0.85, amp: 26, share: 0.15 },
+];
+
 class WeatherFx {
-  constructor(canvas, flash, fps) {
+  constructor(canvas, glCanvas, flash, opts) {
     this.c = canvas;
     this.ctx = canvas.getContext('2d');
     this.flash = flash;
-    this.fps = fps || 30;
+    this.fps = opts.fps || 30;
+    this.scale = opts.scale || 0.4;
+    this.sky = opts.webgl ? new SkyGL(glCanvas) : null;
+    if (this.sky && !this.sky.ok) this.sky = null;
     this.w = 0;
     this.h = 0;
     this.scene = null;
-    this.parts = [];
-    this.stars = [];
+    this.rain = [];
+    this.snow = [];
+    this.hail = [];
+    this.splashes = [];
+    this.drops = [];
+    this.trails = [];
     this.bolt = null;
     this.nextStrike = 0;
     this.running = false;
     this.enabled = true;
     this.last = 0;
+    this.t = 0;
     this._loop = this._loop.bind(this);
+    this.flake = makeSprite(32, (g, s) => {
+      const gr = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+      gr.addColorStop(0, 'rgba(255,255,255,1)');
+      gr.addColorStop(0.35, 'rgba(255,255,255,.85)');
+      gr.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, s, s);
+    });
+    this.dropSprite = makeSprite(64, (g, s) => {
+      const r = s / 2 - 2;
+      const c = s / 2;
+      const body = g.createRadialGradient(c - r * 0.3, c - r * 0.35, r * 0.1, c, c, r);
+      body.addColorStop(0, 'rgba(255,255,255,.22)');
+      body.addColorStop(0.7, 'rgba(210,225,240,.10)');
+      body.addColorStop(1, 'rgba(255,255,255,.28)');
+      g.fillStyle = body;
+      g.beginPath();
+      g.arc(c, c, r, 0, 6.283);
+      g.fill();
+      g.strokeStyle = 'rgba(0,0,0,.22)';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(c, c + 1, r - 1, 0.15 * Math.PI, 0.85 * Math.PI);
+      g.stroke();
+      g.fillStyle = 'rgba(255,255,255,.85)';
+      g.beginPath();
+      g.ellipse(c - r * 0.35, c - r * 0.4, r * 0.22, r * 0.12, -0.6, 0, 6.283);
+      g.fill();
+      g.strokeStyle = 'rgba(255,255,255,.35)';
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.arc(c, c, r - 1, 0.95 * Math.PI, 1.6 * Math.PI);
+      g.stroke();
+    });
   }
 
   resize(w, h) {
@@ -270,6 +641,7 @@ class WeatherFx {
     this.c.width = Math.round(w * dpr);
     this.c.height = Math.round(h * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (this.sky) this.sky.resize(w, h, this.scale);
     this._populate();
   }
 
@@ -279,72 +651,105 @@ class WeatherFx {
     this._populate();
   }
 
+  setSky(params, instant) {
+    if (this.sky) this.sky.setTarget(params, instant);
+    if (!this.running) this._sync();
+  }
+
   _needed() {
     const s = this.scene;
-    return !!s && (s.rain || s.snow || s.hail || s.stars || s.lightning);
+    return !!this.sky || (!!s && (s.rain || s.snow || s.hail || s.stars || s.lightning));
+  }
+
+  _pick(layers) {
+    let r = Math.random();
+    for (let i = 0; i < layers.length; i++) {
+      if (r < layers[i].share) return i;
+      r -= layers[i].share;
+    }
+    return layers.length - 1;
   }
 
   _populate() {
     const s = this.scene;
     if (!s || !this.w) return;
     const k = clamp((this.w * this.h) / (600 * 900), 0.35, 2.5);
-    this.parts = [];
-    for (let i = 0; i < Math.round(s.rain * k); i++) this.parts.push(this._spawn(this._newRain(), true));
-    for (let i = 0; i < Math.round(s.snow * k); i++) this.parts.push(this._spawn(this._newSnow(), true));
-    for (let i = 0; i < Math.round(s.hail * k); i++) this.parts.push(this._spawn(this._newHail(), true));
-    this.stars = [];
-    for (let i = 0; i < Math.round(s.stars * k); i++) {
-      this.stars.push({
-        x: Math.random() * this.w,
-        y: Math.random() * this.h * 0.55,
-        r: 0.4 + Math.random() * 1.3,
-        ph: Math.random() * 6.283,
-        sp: 0.5 + Math.random() * 1.8,
-      });
+    this.rain = [];
+    this.snow = [];
+    this.hail = [];
+    this.splashes = [];
+    for (let i = 0; i < Math.round(s.rain * 1.4 * k); i++) {
+      const z = this._pick(RAIN_LAYERS);
+      const L = RAIN_LAYERS[z];
+      this.rain.push(this._spawn({ z, len: L.len * (0.75 + Math.random() * 0.5), sp: L.sp * (0.85 + Math.random() * 0.3), gy: this.h * (0.82 + Math.random() * 0.18) }, true));
     }
+    for (let i = 0; i < Math.round(s.snow * 1.3 * k); i++) {
+      const z = this._pick(SNOW_LAYERS);
+      const L = SNOW_LAYERS[z];
+      this.snow.push(this._spawn({ z, r: L.r * (0.7 + Math.random() * 0.6), sp: L.sp * (0.8 + Math.random() * 0.4), a: L.a, amp: L.amp, ph: Math.random() * 6.283 }, true));
+    }
+    for (let i = 0; i < Math.round(s.hail * k); i++) {
+      this.hail.push(this._spawn({ r: 1.3 + Math.random() * 2, sp: 560 + Math.random() * 300, vy: 0, gy: this.h * (0.85 + Math.random() * 0.15), b: 0 }, true));
+    }
+    this.glassMax = Math.round((s.glass || 0) * clamp(k, 0.6, 1.6));
+    if (!this.glassMax) {
+      this.drops = [];
+      this.trails = [];
+    }
+    if (!this.sky) {
+      this.stars = [];
+      for (let i = 0; i < Math.round(s.stars * k); i++) {
+        this.stars.push({ x: Math.random() * this.w, y: Math.random() * this.h * 0.55, r: 0.4 + Math.random() * 1.3, ph: Math.random() * 6.283, sp: 0.5 + Math.random() * 1.8 });
+      }
+    } else this.stars = [];
     this._sync();
-  }
-
-  _newRain() {
-    return { t: 'r', len: 10 + Math.random() * 16, sp: 700 + Math.random() * 450, a: 0.22 + Math.random() * 0.35, lw: Math.random() < 0.2 ? 1.6 : 1 };
-  }
-  _newSnow() {
-    return { t: 's', r: 1 + Math.random() * 2.6, sp: 25 + Math.random() * 55, a: 0.55 + Math.random() * 0.45, ph: Math.random() * 6.283, amp: 8 + Math.random() * 22 };
-  }
-  _newHail() {
-    return { t: 'h', r: 1.4 + Math.random() * 1.8, sp: 480 + Math.random() * 320, a: 0.7 + Math.random() * 0.3 };
   }
 
   _spawn(p, init) {
     const sl = this.scene.slant;
     const extra = this.h * Math.abs(sl);
     p.x = Math.random() * (this.w + extra) - (sl > 0 ? extra : 0);
-    p.y = init ? Math.random() * this.h : -20 - Math.random() * 60;
+    p.y = init ? Math.random() * this.h : -40 - Math.random() * 80;
     return p;
   }
 
-  _strike(t) {
-    const pts = [];
-    let x = this.w * (0.15 + Math.random() * 0.7);
-    let y = 0;
-    const end = this.h * (0.4 + Math.random() * 0.3);
-    pts.push([x, y]);
-    while (y < end) {
-      y += 14 + Math.random() * 24;
-      x += (Math.random() - 0.5) * 42;
-      pts.push([x, y]);
-    }
-    this.bolt = { pts, t0: t };
-    const fl = this.flash;
-    const flick = (op) => {
-      fl.style.transition = 'none';
-      fl.style.opacity = String(op);
-      void fl.offsetWidth;
-      fl.style.transition = 'opacity .7s ease-out';
-      fl.style.opacity = '0';
+  _makeBolt() {
+    const segs = [];
+    const grow = (x, y, ang, len, w, depth) => {
+      const pts = [[x, y]];
+      const n = Math.max(4, Math.round(len / 16));
+      const step = len / n;
+      for (let i = 0; i < n; i++) {
+        ang += (Math.random() - 0.5) * 0.8;
+        ang = clamp(ang, -1.1, 1.1);
+        x += Math.sin(ang) * step;
+        y += Math.cos(ang) * step;
+        pts.push([x, y]);
+        if (depth < 2 && Math.random() < (depth ? 0.05 : 0.09)) {
+          grow(x, y, ang + (Math.random() < 0.5 ? -1 : 1) * (0.4 + Math.random() * 0.6), len * (0.2 + Math.random() * 0.3), w * 0.55, depth + 1);
+        }
+      }
+      segs.push({ pts, w });
     };
-    flick(0.3 + Math.random() * 0.35);
-    if (Math.random() < 0.5) setTimeout(() => flick(0.2 + Math.random() * 0.25), 140);
+    const x0 = this.w * (0.12 + Math.random() * 0.76);
+    grow(x0, -10, (Math.random() - 0.5) * 0.4, this.h * (0.45 + Math.random() * 0.35), 2.6, 0);
+    return { segs, x0 };
+  }
+
+  _strike(t) {
+    const sheet = Math.random() < 0.4;
+    const b = sheet ? { segs: [], x0: this.w * Math.random() } : this._makeBolt();
+    b.t0 = t;
+    b.sheet = sheet;
+    this.bolt = b;
+    if (this.sky) this.sky.flashPos = [b.x0 / this.w, sheet ? 30 + Math.random() * 150 : 20];
+  }
+
+  _boltAlpha(age) {
+    if (age < 0.06) return 1;
+    if (age < 0.11) return 0.25;
+    if (age < 0.17) return 0.9;
+    return Math.max(0, 1 - (age - 0.17) / 0.35);
   }
 
   start() {
@@ -370,7 +775,7 @@ class WeatherFx {
     if (!want && this.w) {
       this.ctx.clearRect(0, 0, this.w, this.h);
       // image fixe si les animations sont coupées
-      if (!this.enabled && this._needed()) this._frame(0, 0);
+      if (!this.enabled && this._needed()) this._frame(this.t, 0);
     }
   }
 
@@ -380,24 +785,17 @@ class WeatherFx {
     if (this.last && ts - this.last < 1000 / this.fps - 2) return;
     const dt = this.last ? Math.min(0.1, (ts - this.last) / 1000) : 0;
     this.last = ts;
-    this._frame(ts / 1000, dt);
+    this.t = ts / 1000;
+    this._frame(this.t, dt);
   }
 
   _frame(t, dt) {
     const ctx = this.ctx;
     const s = this.scene;
-    ctx.clearRect(0, 0, this.w, this.h);
-    if (!s) return;
 
-    ctx.fillStyle = '#fff';
-    for (const st of this.stars) {
-      ctx.globalAlpha = 0.3 + 0.7 * Math.abs(Math.sin(t * st.sp + st.ph));
-      ctx.beginPath();
-      ctx.arc(st.x, st.y, st.r, 0, 6.283);
-      ctx.fill();
-    }
-
-    if (s.lightning && dt > 0) {
+    // éclairs
+    let fa = 0;
+    if (s && s.lightning && dt > 0) {
       if (!this.nextStrike) this.nextStrike = t + 1.5 + Math.random() * 3;
       if (t >= this.nextStrike) {
         this._strike(t);
@@ -406,55 +804,177 @@ class WeatherFx {
     }
     if (this.bolt) {
       const age = t - this.bolt.t0;
-      if (age > 0.35 || age < 0) this.bolt = null;
-      else {
-        ctx.globalAlpha = 1 - age / 0.35;
-        ctx.strokeStyle = '#eef3ff';
-        ctx.lineWidth = 2.2;
-        ctx.shadowColor = '#9db8ff';
-        ctx.shadowBlur = 18;
+      if (age > 0.55 || age < 0) this.bolt = null;
+      else fa = this._boltAlpha(age) * (this.bolt.sheet ? 0.7 : 1);
+    }
+
+    if (this.sky && !this.sky.ok) {
+      // contexte WebGL perdu : retour au rendu CSS
+      this.sky = null;
+      if (this.onSkyLost) this.onSkyLost();
+      return;
+    }
+    if (this.sky) {
+      this.sky.flash = fa * 0.85;
+      this.sky.render(t, dt);
+    } else if (fa > 0) {
+      this.flash.style.transition = 'none';
+      this.flash.style.opacity = String(fa * 0.5);
+    } else if (this.flash.style.opacity !== '0') {
+      this.flash.style.opacity = '0';
+    }
+
+    ctx.clearRect(0, 0, this.w, this.h);
+    if (!s) return;
+
+    if (this.stars.length) {
+      ctx.fillStyle = '#fff';
+      for (const st of this.stars) {
+        ctx.globalAlpha = 0.3 + 0.7 * Math.abs(Math.sin(t * st.sp + st.ph));
         ctx.beginPath();
-        this.bolt.pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
-        ctx.stroke();
-        ctx.shadowBlur = 0;
+        ctx.arc(st.x, st.y, st.r, 0, 6.283);
+        ctx.fill();
       }
     }
 
-    ctx.lineCap = 'round';
+    if (this.bolt && this.bolt.segs.length && fa > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (const pass of [0, 1]) {
+        for (const sg of this.bolt.segs) {
+          ctx.globalAlpha = fa * (pass ? 1 : 0.35);
+          ctx.strokeStyle = pass ? '#f4f7ff' : '#9fb6ff';
+          ctx.lineWidth = pass ? sg.w : sg.w * 6;
+          ctx.shadowColor = '#8fa8ff';
+          ctx.shadowBlur = pass ? 8 : 30;
+          ctx.beginPath();
+          sg.pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
     const sl = s.slant;
-    for (const p of this.parts) {
-      if (p.t === 'r') {
-        p.y += p.sp * dt;
-        p.x += p.sp * sl * dt;
-        if (p.y - p.len > this.h) this._spawn(p, false);
-        ctx.globalAlpha = p.a;
-        ctx.strokeStyle = '#d4e9ff';
-        ctx.lineWidth = p.lw;
+    ctx.lineCap = 'round';
+
+    // pluie : trois plans de profondeur
+    if (this.rain.length) {
+      for (let z = 0; z < RAIN_LAYERS.length; z++) {
+        const L = RAIN_LAYERS[z];
+        ctx.globalAlpha = L.a;
+        ctx.strokeStyle = '#dbeafc';
+        ctx.lineWidth = L.w;
         ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(p.x - p.len * sl, p.y - p.len);
+        for (const p of this.rain) {
+          if (p.z !== z) continue;
+          p.y += p.sp * dt;
+          p.x += p.sp * sl * dt;
+          const ground = z === 0 ? this.h + p.len : p.gy;
+          if (p.y > ground) {
+            if (z > 0 && dt > 0 && this.splashes.length < 90 && Math.random() < 0.6) this.splashes.push({ x: p.x, y: p.gy, t0: t, z });
+            this._spawn(p, false);
+          }
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(p.x - p.len * sl, p.y - p.len);
+        }
         ctx.stroke();
-      } else if (p.t === 's') {
-        p.y += p.sp * dt;
-        p.x += (p.sp * sl * 1.5 + Math.sin(t * 1.3 + p.ph) * p.amp) * dt;
-        if (p.y - p.r > this.h) this._spawn(p, false);
-        if (p.x > this.w + 10) p.x = -10;
-        else if (p.x < -10) p.x = this.w + 10;
-        ctx.globalAlpha = p.a;
+      }
+      // éclaboussures
+      ctx.strokeStyle = '#e6f1ff';
+      ctx.lineWidth = 1;
+      this.splashes = this.splashes.filter((sp) => {
+        const age = t - sp.t0;
+        if (age > 0.28 || age < 0) return false;
+        const k = age / 0.28;
+        const r = (sp.z === 2 ? 7 : 4) * (0.3 + k);
+        ctx.globalAlpha = (1 - k) * (sp.z === 2 ? 0.45 : 0.3);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, 6.283);
-        ctx.fill();
-      } else {
-        p.y += p.sp * dt;
-        p.x += p.sp * sl * dt;
-        if (p.y - p.r > this.h) this._spawn(p, false);
-        ctx.globalAlpha = p.a;
+        ctx.ellipse(sp.x, sp.y, r, r * 0.32, 0, Math.PI, 2 * Math.PI);
+        ctx.stroke();
+        return true;
+      });
+    }
+
+    // neige : flocons doux, plus gros et flous au premier plan
+    for (const p of this.snow) {
+      p.y += p.sp * dt;
+      p.x += (p.sp * sl * 1.5 + Math.sin(t * 0.9 + p.ph) * p.amp * 0.6) * dt;
+      if (p.y - p.r > this.h) this._spawn(p, false);
+      if (p.x > this.w + 20) p.x = -20;
+      else if (p.x < -20) p.x = this.w + 20;
+      const d = p.r * (p.z === 2 ? 4.2 : 3);
+      ctx.globalAlpha = p.a;
+      ctx.drawImage(this.flake, p.x - d / 2, p.y - d / 2, d, d);
+    }
+
+    // grêle avec rebond
+    if (this.hail.length) {
+      ctx.fillStyle = '#f2f6fb';
+      for (const p of this.hail) {
+        if (p.b === 0) {
+          p.y += p.sp * dt;
+          p.x += p.sp * sl * dt;
+          if (p.y > p.gy) {
+            p.b = 1;
+            p.vy = -p.sp * 0.22;
+          }
+        } else {
+          p.vy += 1600 * dt;
+          p.y += p.vy * dt;
+          if (p.y > p.gy + 4) {
+            p.b = 0;
+            this._spawn(p, false);
+          }
+        }
+        ctx.globalAlpha = 0.85;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, 6.283);
         ctx.fill();
       }
     }
+
+    // gouttes sur la vitre
+    if (this.glassMax) this._glass(t, dt);
     ctx.globalAlpha = 1;
+  }
+
+  _glass(t, dt) {
+    const ctx = this.ctx;
+    if (dt > 0 && this.drops.length < this.glassMax && Math.random() < dt * this.glassMax * 0.15) {
+      this.drops.push({ x: Math.random() * this.w, y: Math.random() * this.h * 0.95, r: 1.5 + Math.random() * Math.random() * 6, vy: 0, slide: false, born: t, lastTrail: 0 });
+    }
+    // traînées laissées par les gouttes qui glissent
+    this.trails = this.trails.filter((tr) => {
+      const age = t - tr.t0;
+      if (age > 5 || age < 0) return false;
+      ctx.globalAlpha = 0.6 * (1 - age / 5);
+      ctx.drawImage(this.dropSprite, tr.x - tr.r, tr.y - tr.r, tr.r * 2, tr.r * 2);
+      return true;
+    });
+    this.drops = this.drops.filter((d) => {
+      if (!d.slide && d.r > 3.2 && dt > 0 && Math.random() < dt * 0.06) {
+        d.slide = true;
+        d.vy = 20;
+      }
+      if (d.slide) {
+        d.vy = Math.min(d.vy + 120 * dt, 90 + d.r * 12);
+        d.y += d.vy * dt;
+        d.x += Math.sin(t * 3 + d.born) * 6 * dt;
+        if (d.y - d.lastTrail > 7) {
+          d.lastTrail = d.y;
+          if (this.trails.length < 400) this.trails.push({ x: d.x + (Math.random() - 0.5) * 1.5, y: d.y - d.r, r: Math.max(0.8, d.r * (0.25 + Math.random() * 0.2)), t0: t });
+        }
+        if (d.y - d.r > this.h) return false;
+      }
+      const grow = clamp((t - d.born) * 3, 0.05, 1);
+      const r = d.r * grow;
+      ctx.globalAlpha = 0.9;
+      ctx.drawImage(this.dropSprite, d.x - r, d.y - r * 1.05, r * 2, r * 2.1);
+      return true;
+    });
   }
 }
 
@@ -462,7 +982,7 @@ function buildScene(cond, night, windKmh) {
   const w = isNum(windKmh) ? windKmh : 0;
   const s = {
     sky: 'cloudy', sun: false, moon: false, stars: 0, clouds: 0, shade: 'grey',
-    rain: 0, snow: 0, hail: 0, fog: false, lightning: false,
+    rain: 0, snow: 0, hail: 0, glass: 0, fog: false, lightning: false,
     wind: 1 + Math.min(w, 90) / 30,
     slant: Math.min(w / 120, 0.45),
   };
@@ -476,13 +996,13 @@ function buildScene(cond, night, windKmh) {
       Object.assign(s, { sky: cond === 'windy' ? 'partly' : 'cloudy', clouds: 6, shade: 'grey', wind: s.wind * 2.2, slant: Math.max(s.slant, 0.35) });
       break;
     case 'fog': Object.assign(s, { sky: 'fog', fog: true, clouds: 2, shade: 'light' }); break;
-    case 'rainy': Object.assign(s, { sky: 'rain', clouds: 7, shade: 'dark', rain: 140 }); break;
-    case 'pouring': Object.assign(s, { sky: 'storm', clouds: 8, shade: 'dark', rain: 340 }); break;
+    case 'rainy': Object.assign(s, { sky: 'rain', clouds: 7, shade: 'dark', rain: 140, glass: 18 }); break;
+    case 'pouring': Object.assign(s, { sky: 'storm', clouds: 8, shade: 'dark', rain: 340, glass: 34 }); break;
     case 'lightning': Object.assign(s, { sky: 'storm', clouds: 8, shade: 'storm', lightning: true, rain: 30 }); break;
-    case 'lightning-rainy': Object.assign(s, { sky: 'storm', clouds: 8, shade: 'storm', lightning: true, rain: 260 }); break;
+    case 'lightning-rainy': Object.assign(s, { sky: 'storm', clouds: 8, shade: 'storm', lightning: true, rain: 260, glass: 26 }); break;
     case 'snowy': Object.assign(s, { sky: 'snow', clouds: 6, shade: 'grey', snow: 160 }); break;
-    case 'snowy-rainy': Object.assign(s, { sky: 'snow', clouds: 7, shade: 'dark', snow: 90, rain: 90 }); break;
-    case 'hail': Object.assign(s, { sky: 'storm', clouds: 8, shade: 'dark', hail: 140, rain: 60 }); break;
+    case 'snowy-rainy': Object.assign(s, { sky: 'snow', clouds: 7, shade: 'dark', snow: 90, rain: 90, glass: 10 }); break;
+    case 'hail': Object.assign(s, { sky: 'storm', clouds: 8, shade: 'dark', hail: 140, rain: 60, glass: 12 }); break;
     default: Object.assign(s, { sky: 'cloudy', clouds: 6, shade: 'grey' });
   }
   if (night && (s.sky === 'clear' || s.sky === 'partly')) {
@@ -493,7 +1013,7 @@ function buildScene(cond, night, windKmh) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Styles                                                              */
+/* Styles                                                            */
 /* ------------------------------------------------------------------ */
 
 const STYLE = `
@@ -509,6 +1029,9 @@ ha-card {
 .skywrap, .sky, .clouds, canvas, .flash, .shade, .fog { position:absolute; inset:0; }
 .sky { transition: opacity 1.5s ease; }
 canvas { width:100%; height:100%; }
+.glsky { position:absolute; inset:0; width:100%; height:100%; display:none; }
+.bg.gl .glsky { display:block; }
+.bg.gl .skywrap, .bg.gl .sun, .bg.gl .moon, .bg.gl .clouds, .bg.gl .fog { display:none; }
 .flash { background: rgb(225,232,255); opacity:0; mix-blend-mode: screen; }
 .shade { background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.12) 45%, rgba(0,0,0,.28) 100%); }
 
@@ -733,6 +1256,7 @@ class MeteoAnimeCard extends HTMLElement {
       <style>${STYLE}</style>
       <ha-card>
         <div class="bg">
+          <canvas class="glsky"></canvas>
           <div class="skywrap"></div>
           <div class="sun"></div>
           <div class="moon"></div>
@@ -747,7 +1271,18 @@ class MeteoAnimeCard extends HTMLElement {
     this._root = root;
     this._bg = root.querySelector('.bg');
     this._content = root.querySelector('.content');
-    this._fx = new WeatherFx(root.querySelector('canvas'), root.querySelector('.flash'), this._config.fps);
+    const q = this._config.quality;
+    this._fx = new WeatherFx(root.querySelector('canvas:not(.glsky)'), root.querySelector('.glsky'), root.querySelector('.flash'), {
+      fps: this._config.fps,
+      scale: QUALITY[q] || QUALITY.medium,
+      webgl: q !== 'css',
+    });
+    this._bg.classList.toggle('gl', !!this._fx.sky);
+    this._fx.onSkyLost = () => {
+      this._bg.classList.remove('gl');
+      this._sceneKey = null;
+      this._update();
+    };
     this._ro = new ResizeObserver((entries) => {
       const r = entries[0].contentRect;
       this._fx.resize(r.width, r.height);
@@ -867,10 +1402,12 @@ class MeteoAnimeCard extends HTMLElement {
 
     const wind = isNum(c.demo_wind) ? c.demo_wind : a.wind_speed;
     const key = `${cond}|${night}|${Math.round((wind || 0) / 15)}`;
+    const firstScene = this._sceneKey === null;
     if (key !== this._sceneKey) {
       this._sceneKey = key;
       this._applyScene(buildScene(cond, night, wind), night);
     }
+    if (this._fx.sky) this._fx.setSky(skyParams(cond, night, wind, this._sun?.attributes), firstScene);
 
     const scroller = this._content.querySelector('.hscroll');
     const scrollLeft = scroller ? scroller.scrollLeft : 0;
@@ -895,6 +1432,10 @@ class MeteoAnimeCard extends HTMLElement {
   }
 
   _applyScene(s, night) {
+    if (this._fx.sky) {
+      this._fx.setScene(s);
+      return;
+    }
     const n = night ? 1 : 0;
     const wrap = this._root.querySelector('.skywrap');
     const layer = document.createElement('div');

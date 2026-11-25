@@ -58,7 +58,7 @@ function makeHass() {
     config: { location_name: 'Ma ville', time_zone: 'Europe/Paris' },
     states: {
       'weather.demo': { entity_id:'weather.demo', state: cond, attributes: { temperature: 2.6, apparent_temperature: 0.1, humidity: 95, pressure: 1010.9, wind_bearing: 50, wind_speed: 10.8, wind_gust_speed: 0, supported_features: 3, attribution: 'Data provided by Météo-France (démo)' } },
-      'sun.sun': { entity_id:'sun.sun', state: night ? 'below_horizon' : 'above_horizon', attributes: { next_rising: rise.toISOString(), next_setting: set.toISOString() } },
+      'sun.sun': { entity_id:'sun.sun', state: night ? 'below_horizon' : 'above_horizon', attributes: { next_rising: rise.toISOString(), next_setting: set.toISOString(), elevation: night ? -20 : 14, azimuth: night ? 300 : 215 } },
       'sensor.alerte': { entity_id:'sensor.alerte', state: alertLvl, attributes: { 'Grand-froid': alertLvl, 'Vent violent': 'Vert' } },
       'sensor.iqa': { entity_id:'sensor.iqa', state: '30', attributes: {} },
     },
