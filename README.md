@@ -14,7 +14,7 @@ Un seul fichier JS, sans dépendance ni build.
 
 1. Copier `meteo-anime-card.js` dans `/config/www/meteo-anime-card/` sur Home Assistant.
 2. *Paramètres → Tableaux de bord → ⋮ → Ressources → Ajouter* :
-   - URL : `/local/meteo-anime-card/meteo-anime-card.js?v=0.2.1`
+   - URL : `/local/meteo-anime-card/meteo-anime-card.js?v=0.2.2`
    - Type : **Module JavaScript**
 3. Recharger le navigateur (ou vider le cache de Fully Kiosk sur la tablette).
 
@@ -43,6 +43,7 @@ name: Ma ville
 | `quality` | `medium` | Rendu du ciel WebGL : `high`, `medium`, `low`, ou `css` (ancien rendu léger, sans WebGL) |
 | `fps` | `30` | Images/s du canvas (pluie, neige…) |
 | `min_height` | `auto` | Ex. `100vh` pour remplir l'écran de la tablette |
+| `debug` | `false` | Affiche en bas de la carte le mode de rendu (WebGL ou CSS et pourquoi), la puce graphique et les images/s |
 | `demo_condition` | — | Forcer une météo pour tester (`rainy`, `snowy`, `lightning-rainy`…) |
 | `demo_night` | — | `true`/`false` pour forcer nuit/jour |
 

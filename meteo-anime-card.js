@@ -4,7 +4,7 @@
  * brouillard, orage) qui suit en direct l'état d'une entité weather.*.
  * Aucune dépendance, aucun build : un seul fichier JS.
  */
-const CARD_VERSION = '0.2.1';
+const CARD_VERSION = '0.2.2';
 const QUALITY = { high: 0.6, medium: 0.4, low: 0.28 };
 
 /* ------------------------------------------------------------------ */
@@ -296,7 +296,7 @@ float fbm3(vec2 p) {
   return v;
 }
 float cloudN(vec2 p, float t) {
-  vec2 q = vec2(fbm3(p + vec2(0.0, t * 0.05)), fbm3(p + vec2(5.2, 1.3) - vec2(0.0, t * 0.04)));
+  vec2 q = vec2(fbm3(p + vec2(0.0, t * 0.09)), fbm3(p + vec2(5.2, 1.3) - vec2(0.0, t * 0.07)));
   return fbm(p + 1.1 * q);
 }
 
@@ -379,15 +379,15 @@ const GLP = {
   },
   cloudy: {
     d: { top: [0.42, 0.5, 0.58], bot: [0.68, 0.72, 0.77], lit: [0.88, 0.9, 0.93], sh: [0.46, 0.5, 0.57], cover: 0.88, dark: 0.3 },
-    n: { top: [0.04, 0.05, 0.07], bot: [0.11, 0.12, 0.16], lit: [0.2, 0.22, 0.27], sh: [0.06, 0.07, 0.09], cover: 0.88, dark: 0.3 },
+    n: { top: [0.04, 0.05, 0.07], bot: [0.13, 0.13, 0.16], lit: [0.34, 0.32, 0.33], sh: [0.07, 0.08, 0.1], cover: 0.86, dark: 0.15 },
   },
   rain: {
     d: { top: [0.3, 0.36, 0.43], bot: [0.52, 0.57, 0.63], lit: [0.66, 0.7, 0.75], sh: [0.3, 0.33, 0.38], cover: 0.96, dark: 0.55 },
-    n: { top: [0.03, 0.04, 0.05], bot: [0.09, 0.1, 0.13], lit: [0.16, 0.18, 0.22], sh: [0.04, 0.05, 0.06], cover: 0.96, dark: 0.5 },
+    n: { top: [0.03, 0.04, 0.05], bot: [0.11, 0.11, 0.13], lit: [0.27, 0.26, 0.28], sh: [0.05, 0.05, 0.07], cover: 0.94, dark: 0.3 },
   },
   storm: {
     d: { top: [0.15, 0.18, 0.23], bot: [0.33, 0.37, 0.43], lit: [0.46, 0.49, 0.54], sh: [0.14, 0.16, 0.2], cover: 1, dark: 0.8 },
-    n: { top: [0.02, 0.02, 0.03], bot: [0.06, 0.07, 0.09], lit: [0.12, 0.13, 0.16], sh: [0.02, 0.03, 0.04], cover: 1, dark: 0.7 },
+    n: { top: [0.02, 0.02, 0.03], bot: [0.08, 0.08, 0.1], lit: [0.2, 0.2, 0.23], sh: [0.03, 0.03, 0.05], cover: 1, dark: 0.45 },
   },
   snow: {
     d: { top: [0.55, 0.62, 0.7], bot: [0.84, 0.87, 0.9], lit: [0.94, 0.95, 0.97], sh: [0.62, 0.66, 0.72], cover: 0.92, dark: 0.25 },
@@ -395,7 +395,7 @@ const GLP = {
   },
   fog: {
     d: { top: [0.6, 0.64, 0.68], bot: [0.8, 0.82, 0.84], lit: [0.88, 0.89, 0.9], sh: [0.62, 0.65, 0.68], cover: 0.55, dark: 0.2 },
-    n: { top: [0.06, 0.07, 0.08], bot: [0.14, 0.15, 0.17], lit: [0.2, 0.21, 0.23], sh: [0.09, 0.1, 0.11], cover: 0.55, dark: 0.3 },
+    n: { top: [0.06, 0.07, 0.08], bot: [0.15, 0.15, 0.17], lit: [0.3, 0.3, 0.31], sh: [0.1, 0.1, 0.12], cover: 0.55, dark: 0.2 },
   },
 };
 
@@ -410,16 +410,21 @@ class SkyGL {
     this.flash = 0;
     this.flashPos = [0.5, 60];
     this.scale = 0.4;
+    this.frames = 0;
+    this.reason = '';
+    this.renderer = '';
     let gl = null;
     try {
       gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true, antialias: false, depth: false, stencil: false, powerPreference: 'low-power' });
     } catch (e) {
       gl = null;
     }
+    if (!gl) this.reason = 'WebGL refusé par le navigateur';
     this.ok = !!gl && this._init(gl);
     canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
       this.ok = false;
+      this.reason = 'contexte WebGL perdu';
     });
     canvas.addEventListener('webglcontextrestored', () => {
       this.ok = this._init(this.gl);
@@ -428,6 +433,12 @@ class SkyGL {
 
   _init(gl) {
     this.gl = gl;
+    try {
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      this.renderer = String(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    } catch (e) {
+      this.renderer = '?';
+    }
     const sh = (type, src) => {
       const s = gl.createShader(type);
       gl.shaderSource(s, src);
@@ -440,13 +451,17 @@ class SkyGL {
     };
     const vs = sh(gl.VERTEX_SHADER, SKY_VERT);
     const fs = sh(gl.FRAGMENT_SHADER, SKY_FRAG);
-    if (!vs || !fs) return false;
+    if (!vs || !fs) {
+      this.reason = 'shader refusé par le GPU';
+      return false;
+    }
     const pr = gl.createProgram();
     gl.attachShader(pr, vs);
     gl.attachShader(pr, fs);
     gl.linkProgram(pr);
     if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) {
       console.warn('meteo-anime-card: link', gl.getProgramInfoLog(pr));
+      this.reason = 'shader refusé par le GPU';
       return false;
     }
     gl.useProgram(pr);
@@ -515,6 +530,15 @@ class SkyGL {
     gl.uniform1f(u.uFlash, this.flash);
     gl.uniform2fv(u.uFlashPos, toP(this.flashPos[0], this.flashPos[1]));
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    // autocontrôle : si rien n'a été dessiné, on repasse en rendu CSS
+    if (++this.frames === 6) {
+      const px = new Uint8Array(4);
+      gl.readPixels(this.c.width >> 1, this.c.height >> 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      if (px[3] === 0 || gl.isContextLost()) {
+        this.ok = false;
+        this.reason = 'le GPU ne dessine rien';
+      }
+    }
   }
 }
 
@@ -530,7 +554,7 @@ function skyParams(cond, night, windKmh, sun) {
   // lumière rasante de l'aube et du crépuscule
   const twi = clearish && elev > -6 && elev < 8 ? 1 - Math.abs(elev - 1) / 7 : 0;
   if (twi > 0) bot = bot.map((v, i) => lerp(v, [0.98, 0.62, 0.42][i], clamp(twi, 0, 1) * 0.75));
-  const wind = (0.6 + (isNum(windKmh) ? windKmh : 0) / 20) * (cond === 'windy' || cond === 'windy-variant' ? 2 : 1);
+  const wind = (1.3 + (isNum(windKmh) ? windKmh : 0) / 10) * (cond === 'windy' || cond === 'windy-variant' ? 2 : 1);
   const fog = { fog: 0.85, rainy: 0.12, pouring: 0.3, 'lightning-rainy': 0.2, snowy: 0.2, 'snowy-rainy': 0.25, hail: 0.15 }[cond] || 0;
   return {
     top: pal.top,
@@ -580,7 +604,15 @@ class WeatherFx {
     this.fps = opts.fps || 30;
     this.scale = opts.scale || 0.4;
     this.sky = opts.webgl ? new SkyGL(glCanvas) : null;
-    if (this.sky && !this.sky.ok) this.sky = null;
+    this.renderer = this.sky ? this.sky.renderer : '';
+    this.reason = opts.webgl ? '' : 'désactivé (quality: css)';
+    if (this.sky && !this.sky.ok) {
+      this.reason = this.sky.reason || 'WebGL indisponible';
+      this.sky = null;
+    }
+    this.fpsCount = 0;
+    this.fpsShown = 0;
+    this.fpsT = 0;
     this.w = 0;
     this.h = 0;
     this.scene = null;
@@ -808,8 +840,16 @@ class WeatherFx {
       else fa = this._boltAlpha(age) * (this.bolt.sheet ? 0.7 : 1);
     }
 
+    this.fpsCount++;
+    if (t - this.fpsT >= 1) {
+      this.fpsShown = this.fpsCount;
+      this.fpsCount = 0;
+      this.fpsT = t;
+    }
     if (this.sky && !this.sky.ok) {
-      // contexte WebGL perdu : retour au rendu CSS
+      // contexte WebGL perdu ou rien dessiné : retour au rendu CSS
+      this.reason = this.sky.reason || 'WebGL indisponible';
+      console.warn('meteo-anime-card: retour au rendu CSS :', this.reason);
       this.sky = null;
       if (this.onSkyLost) this.onSkyLost();
       return;
@@ -1152,6 +1192,8 @@ canvas { width:100%; height:100%; }
 .sunarc .sun-dot { fill:#ffd45a; filter: drop-shadow(0 0 4px rgba(255,212,90,.9)); }
 .sunt { display:flex; justify-content:space-between; font-size:.72rem; opacity:.85; }
 
+.dbg { position:absolute; right:8px; bottom:6px; z-index:2; font-size:11px; color:#fff; background:rgba(0,0,0,.55); padding:3px 8px; border-radius:6px; pointer-events:none; }
+.dbg:empty { display:none; }
 .err { padding: 16px; background: #b3261e; color:#fff; }
 .foot { text-align:center; font-size:.75rem; opacity:.6; margin-top: 6px; }
 
@@ -1267,6 +1309,7 @@ class MeteoAnimeCard extends HTMLElement {
           <div class="shade"></div>
         </div>
         <div class="content"></div>
+        <div class="dbg"></div>
       </ha-card>`;
     this._root = root;
     this._bg = root.querySelector('.bg');
@@ -1283,6 +1326,7 @@ class MeteoAnimeCard extends HTMLElement {
       this._sceneKey = null;
       this._update();
     };
+    console.info('meteo-anime-card: rendu', this._fx.sky ? `WebGL (${this._fx.renderer})` : `CSS (${this._fx.reason})`);
     this._ro = new ResizeObserver((entries) => {
       const r = entries[0].contentRect;
       this._fx.resize(r.width, r.height);
@@ -1302,6 +1346,14 @@ class MeteoAnimeCard extends HTMLElement {
     const card = this._root.querySelector('ha-card');
     card.style.setProperty('--mac-min-height', this._config.min_height || 'auto');
     this._bg.classList.toggle('static', this._config.animations === false);
+    clearInterval(this._dbgTimer);
+    this._root.querySelector('.dbg').textContent = '';
+    if (this._config.debug) {
+      this._dbgTimer = setInterval(() => {
+        const fx = this._fx;
+        this._root.querySelector('.dbg').textContent = `v${CARD_VERSION} · ${fx.sky ? 'WebGL · ' + fx.renderer : 'CSS · ' + (fx.reason || '?')} · ${fx.running ? fx.fpsShown + ' img/s' : 'animation arrêtée'}`;
+      }, 1000);
+    }
     if (this._config.animations === false) this._fx.stop();
     else if (this.isConnected) this._fx.start();
   }
