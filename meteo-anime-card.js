@@ -4,7 +4,7 @@
  * brouillard, orage) qui suit en direct l'état d'une entité weather.*.
  * Aucune dépendance, aucun build : un seul fichier JS.
  */
-const CARD_VERSION = '0.4.0';
+const CARD_VERSION = '0.5.0';
 const QUALITY = { high: 0.6, medium: 0.4, low: 0.28 };
 
 /* ------------------------------------------------------------------ */
@@ -254,6 +254,63 @@ function sunArc(frac) {
     <path d="M${cx - r} ${cy} A${r} ${r} 0 0 1 ${cx + r} ${cy}" class="sun-path"/>
     ${dot}
   </svg>`;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Sources météo (Météo-France, OpenWeatherMap, autre)                 */
+/* ------------------------------------------------------------------ */
+
+const SOURCES = [
+  { value: 'meteo_france', label: 'Météo-France' },
+  { value: 'openweathermap', label: 'OpenWeatherMap' },
+  { value: 'other', label: 'Autre intégration météo' },
+];
+
+const platformOf = (hass, eid) => hass?.entities?.[eid]?.platform;
+const hasForecast = (hass, eid) => ((hass?.states?.[eid]?.attributes?.supported_features || 0) & 3) !== 0;
+
+function weatherIds(hass) {
+  return Object.keys(hass?.states || {}).filter((e) => e.startsWith('weather.'));
+}
+
+function sourceOf(hass, eid) {
+  const p = platformOf(hass, eid) || '';
+  if (p === 'meteo_france' || String(eid).includes('meteo_france')) return 'meteo_france';
+  if (p === 'openweathermap' || String(eid).includes('openweathermap')) return 'openweathermap';
+  return 'other';
+}
+
+/* Première entité weather.* de la source demandée */
+function weatherFor(hass, source) {
+  const ids = weatherIds(hass);
+  if (source && source !== 'other') {
+    const hit = ids.find((e) => sourceOf(hass, e) === source);
+    if (hit) return hit;
+  }
+  return ids[0];
+}
+
+/* Capteur UV de la même intégration (même appareil), sinon le « …_uv » de Météo-France */
+function findUvSensor(hass, weatherId) {
+  const reg = hass?.entities || {};
+  const dev = reg[weatherId]?.device_id;
+  if (dev) {
+    const hit = Object.values(reg).find(
+      (e) => e.device_id === dev && e.entity_id.startsWith('sensor.') &&
+        (e.translation_key === 'uv_index' || /(_uv|_uv_index|indice_uv)$/.test(e.entity_id)),
+    );
+    if (hit) return hit.entity_id;
+  }
+  const guess = `sensor.${String(weatherId).split('.')[1]}_uv`;
+  return hass?.states?.[guess] ? guess : null;
+}
+
+/* Si l'entité ne fournit pas de prévisions : une autre entité météo qui en a (Météo-France en priorité) */
+function forecastFallback(hass, weatherId) {
+  if (!weatherId || hasForecast(hass, weatherId)) return null;
+  const ids = weatherIds(hass).filter((e) => e !== weatherId && hasForecast(hass, e));
+  return ids.find((e) => sourceOf(hass, e) === 'meteo_france') || ids[0] || null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1216,6 +1273,7 @@ canvas { width:100%; height:100%; }
 
 .dbg { position:absolute; right:8px; top:8px; z-index:2; font-size:11px; color:#fff; background:rgba(0,0,0,.55); padding:3px 8px; border-radius:6px; pointer-events:none; }
 .dbg:empty { display:none; }
+.nofc { font-size:.92rem; opacity:.9; }
 .err { padding: 16px; background: #b3261e; color:#fff; }
 .foot { text-align:center; font-size:.75rem; opacity:.6; margin-top: 6px; }
 
@@ -1241,13 +1299,16 @@ class MeteoAnimeCard extends HTMLElement {
 
   static getStubConfig(hass) {
     const ids = Object.keys(hass?.states || {});
-    const weather = ids.find((e) => e.startsWith('weather.meteo_france')) || ids.find((e) => e.startsWith('weather.')) || 'weather.home';
+    const weather = weatherFor(hass, 'meteo_france') || 'weather.home';
+    const fc = forecastFallback(hass, weather);
     const alert = ids.find((e) => e.startsWith('sensor.') && e.endsWith('_weather_alert'));
     const atmo = ids.filter((e) => e.startsWith('sensor.atmo_france_qualite_globale_') && !e.endsWith('_j_1'));
     const aqi = atmo.find((e) => !e.includes('_pollen_'));
     const pollen = atmo.find((e) => e.includes('_pollen_'));
     return {
+      source: sourceOf(hass, weather),
       entity: weather,
+      ...(fc ? { forecast_entity: fc } : {}),
       ...(alert ? { alert_entity: alert } : {}),
       ...(aqi ? { aqi_entity: aqi } : {}),
       ...(pollen ? { pollen_entity: pollen } : {}),
@@ -1290,9 +1351,13 @@ class MeteoAnimeCard extends HTMLElement {
     const al = c.alert_entity ? hass.states[c.alert_entity] : null;
     const aqi = c.aqi_entity ? hass.states[c.aqi_entity] : null;
     const pol = c.pollen_entity ? hass.states[c.pollen_entity] : null;
-    // UV : option uv_entity, sinon le capteur « …_uv » que crée Météo-France à côté de l'entité météo
-    const uvId = c.uv_entity || `sensor.${String(c.entity).split('.')[1]}_uv`;
-    const uv = hass.states[uvId] || null;
+    // UV : option uv_entity, sinon le capteur UV de la même intégration (Météo-France, OpenWeatherMap…)
+    const uvKey = `${c.entity}|${c.uv_entity || ''}`;
+    if (this._uvKey !== uvKey) {
+      this._uvKey = uvKey;
+      this._uvId = c.uv_entity || findUvSensor(hass, c.entity);
+    }
+    const uv = this._uvId ? hass.states[this._uvId] || null : null;
     if (first || st !== this._st || sun !== this._sun || al !== this._al || aqi !== this._aqi || pol !== this._pol || uv !== this._uvSt) {
       this._st = st;
       this._sun = sun;
@@ -1413,7 +1478,8 @@ class MeteoAnimeCard extends HTMLElement {
   _subscribe() {
     const hass = this._hass;
     if (this._subs || !hass || !hass.connection || !this.isConnected) return;
-    const st = hass.states[this._config.entity];
+    const fid = this._config.forecast_entity || this._config.entity;
+    const st = hass.states[fid];
     if (!st) return;
     const feats = st.attributes.supported_features || 0;
     const types = [];
@@ -1427,7 +1493,7 @@ class MeteoAnimeCard extends HTMLElement {
             this._forecast[type] = msg.forecast || [];
             this._update();
           },
-          { type: 'weather/subscribe_forecast', forecast_type: type, entity_id: this._config.entity },
+          { type: 'weather/subscribe_forecast', forecast_type: type, entity_id: fid },
         )
         .catch((err) => {
           console.warn('meteo-anime-card: abonnement prévisions impossible', type, err);
@@ -1526,9 +1592,17 @@ class MeteoAnimeCard extends HTMLElement {
     let html = this._renderHead(a, cond, night, daily[0]);
     html += this._renderAlert();
     if (c.show_daily && daily.length) html += this._renderDaily(daily, a);
+    const fid = c.forecast_entity || c.entity;
+    if ((c.show_daily || c.show_hourly) && !daily.length && !hourly.length && this._hass.states[fid] && !hasForecast(this._hass, fid)) {
+      html += `<div class="panel nofc">Cette entité ne fournit pas de prévisions. Dans l'éditeur de la carte, choisissez une <b>Source des prévisions</b> (par exemple Météo-France).</div>`;
+    }
     if (c.show_hourly && hourly.length) html += this._renderHourly(hourly, a, cond, night, sunT);
     if (c.show_tiles) html += this._renderTiles(a, daily[0], sunT, night);
-    if (a.attribution && c.show_attribution !== false) html += `<div class="foot">${esc(a.attribution)}</div>`;
+    if (c.show_attribution !== false) {
+      const fa = c.forecast_entity ? this._hass.states[c.forecast_entity]?.attributes?.attribution : null;
+      const foot = [a.attribution, fa && fa !== a.attribution ? `prévisions : ${fa}` : null].filter(Boolean).join(' · ');
+      if (foot) html += `<div class="foot">${esc(foot)}</div>`;
+    }
     this._content.innerHTML = html;
 
     const sc = this._content.querySelector('.hscroll');
@@ -1753,7 +1827,9 @@ const EDITOR_DEFAULTS = {
 };
 
 const EDITOR_LABELS = {
-  entity: 'Entité météo',
+  source: 'Source des relevés',
+  entity: 'Entité météo (relevés actuels)',
+  forecast_entity: 'Source des prévisions',
   name: 'Titre (par défaut : nom du domicile)',
   alert_entity: 'Vigilance Météo-France',
   aqi_entity: 'Qualité de l’air',
@@ -1778,6 +1854,7 @@ const EDITOR_LABELS = {
 };
 
 const EDITOR_HELPERS = {
+  source: 'Choisit automatiquement l’entité météo et le capteur UV de cette intégration',
   alert_entity: 'Capteur « … Weather alert » de Météo-France',
   aqi_entity: 'Ex. Atmo France « Qualité globale »',
   pollen_entity: 'Ex. Atmo France « Qualité globale Pollen »',
@@ -1892,17 +1969,59 @@ class MeteoAnimeCardEditor extends HTMLElement {
       await this._ensureForm();
       this._form = document.createElement('ha-form');
       this._form.computeLabel = (s) => EDITOR_LABELS[s.name] ?? s.name;
-      this._form.computeHelper = (s) => EDITOR_HELPERS[s.name];
+      this._form.computeHelper = (s) => this._helper(s.name);
       this._form.addEventListener('value-changed', (ev) => this._changed(ev.detail.value));
       this.appendChild(this._form);
     }
     this._form.hass = this._hass;
-    this._form.schema = EDITOR_SCHEMA;
-    this._form.data = { ...EDITOR_DEFAULTS, demo_condition: '', ...this._config };
+    this._form.schema = this._schema();
+    this._form.data = { ...EDITOR_DEFAULTS, demo_condition: '', source: this._source(), ...this._config };
+  }
+
+  _schema() {
+    const src = this._source();
+    const ent = { domain: 'weather' };
+    if (src !== 'other') ent.integration = src;
+    return [
+      { name: 'source', selector: { select: { mode: 'dropdown', options: SOURCES } } },
+      { name: 'entity', required: true, selector: { entity: ent } },
+      { name: 'forecast_entity', selector: { entity: { domain: 'weather' } } },
+      ...EDITOR_SCHEMA.slice(1),
+    ];
+  }
+
+  _source() {
+    return this._config.source || sourceOf(this._hass, this._config.entity);
+  }
+
+  _helper(name) {
+    if (name === 'forecast_entity') {
+      const e = this._config.entity;
+      if (e && this._hass?.states?.[e] && !hasForecast(this._hass, e)) {
+        return '⚠️ L’entité choisie ne fournit pas de prévisions : choisissez-en une ici (ex. Météo-France)';
+      }
+      return 'Vide : prévisions de l’entité météo ci-dessus';
+    }
+    return EDITOR_HELPERS[name];
   }
 
   _changed(value) {
+    const prevSource = this._source();
+    const prevEntity = this._config.entity;
     const cfg = { ...this._config, ...value };
+    const newSource = value.source && value.source !== prevSource;
+    if (newSource) {
+      // nouvelle source : on choisit son entité météo, l'UV sera détecté automatiquement
+      const w = weatherFor(this._hass, value.source);
+      if (w) cfg.entity = w;
+      delete cfg.uv_entity;
+      delete cfg.forecast_entity;
+    }
+    if (cfg.entity !== prevEntity || newSource) {
+      const fc = forecastFallback(this._hass, cfg.entity);
+      if (fc && !cfg.forecast_entity) cfg.forecast_entity = fc;
+    }
+    if (cfg.forecast_entity && cfg.forecast_entity === cfg.entity) delete cfg.forecast_entity;
     // on garde un YAML propre : pas de valeurs vides ni de valeurs par défaut
     for (const k of Object.keys(cfg)) {
       if (cfg[k] === '' || cfg[k] === null || cfg[k] === undefined) delete cfg[k];

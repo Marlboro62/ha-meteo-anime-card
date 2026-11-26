@@ -33,7 +33,7 @@
 
 Carte Lovelace pour Home Assistant inspirée des applis météo des tablettes : **le fond s'anime selon la météo en direct**. Ciel calculé en temps réel, nuages en volume éclairés par le soleil, pluie, neige, orage, brouillard… et toutes les infos utiles par-dessus.
 
-Pensée pour une **tablette murale** (plein écran, mode kiosque), elle fonctionne avec n'importe quelle entité `weather.*` : **Météo-France**, Met.no, OpenWeatherMap, AccuWeather, etc.
+Pensée pour une **tablette murale** (plein écran, mode kiosque), elle fonctionne avec **Météo-France**, **OpenWeatherMap** et n'importe quelle autre entité `weather.*` (Met.no, AccuWeather…). Les relevés et les prévisions peuvent venir de deux sources différentes.
 
 🎮 **[Essayer la démo en ligne](https://marlboro62.github.io/ha-meteo-anime-card/docs/demo.html)** : la vraie carte avec des données simulées, sans installer Home Assistant. Choisissez une météo, le jour ou la nuit, le vent, et regardez le ciel changer.
 
@@ -71,7 +71,7 @@ Si la carte n'apparaît pas encore dans la recherche, ajoutez le dépôt à la m
 
 1. Téléchargez [`meteo-anime-card.js`](https://raw.githubusercontent.com/Marlboro62/ha-meteo-anime-card/main/meteo-anime-card.js) (clic droit → Enregistrer sous) et copiez-le dans `/config/www/`.
 2. **Paramètres → Tableaux de bord → ⋮ → Ressources → Ajouter une ressource** :
-   - URL : `/local/meteo-anime-card.js?v=0.4.0`
+   - URL : `/local/meteo-anime-card.js?v=0.5.0`
    - Type : **Module JavaScript**
 3. Rechargez la page (Ctrl+F5).
 
@@ -91,11 +91,13 @@ Pour une tablette murale, utilisez une vue de type **Panneau (1 carte)** et ajou
 
 | Option | Défaut | Rôle |
 | --- | --- | --- |
-| `entity` | — (obligatoire) | Entité `weather.*` |
+| `source` | auto | `meteo_france`, `openweathermap` ou `other`. Dans l'éditeur, choisir la source remplit automatiquement l'entité météo et le capteur UV |
+| `entity` | — (obligatoire) | Entité `weather.*` des relevés actuels (température, humidité, vent, pression…) |
+| `forecast_entity` | `entity` | Entité `weather.*` pour les prévisions, si elle est différente (ex. relevés OpenWeatherMap + prévisions Météo-France) |
 | `alert_entity` | — | Capteur de vigilance Météo-France (« … Weather alert »). Bandeau affiché en jaune, orange ou rouge |
 | `aqi_entity` | — | Capteur de qualité de l'air. Avec **Atmo France** (« Qualité globale »), la pastille affiche le libellé et la couleur officiels (« Air : Moyen ») |
 | `pollen_entity` | — | Capteur pollen (ex. Atmo France « Qualité globale Pollen ») : pastille « Pollen : Très faible » |
-| `uv_entity` | auto | Capteur d'indice UV. Par défaut, la carte prend le capteur `…_uv` créé par Météo-France à côté de l'entité météo |
+| `uv_entity` | auto | Capteur d'indice UV. Par défaut, la carte prend le capteur UV de la même intégration (Météo-France ou OpenWeatherMap) |
 | `sun_entity` | `sun.sun` | Jour/nuit, position du soleil, lever/coucher |
 | `name` | nom du domicile | Titre en haut de la carte |
 | `days` / `hours` | `5` / `24` | Nombre de jours / d'heures de prévisions |
@@ -110,6 +112,20 @@ Pour une tablette murale, utilisez une vue de type **Panneau (1 carte)** et ajou
 | `demo_condition` | — | Forcer une météo (`sunny`, `partlycloudy`, `cloudy`, `rainy`, `pouring`, `lightning-rainy`, `snowy`, `snowy-rainy`, `hail`, `fog`, `windy`, `clear-night`) |
 | `demo_night` | — | `true` / `false` pour forcer la nuit ou le jour |
 | `debug` | `false` | Affiche en haut à droite le mode de rendu (WebGL ou CSS, et pourquoi), la puce graphique et les images/s |
+
+### Météo-France ou OpenWeatherMap
+
+Au début de l'éditeur visuel, **Source des relevés** propose Météo-France, OpenWeatherMap ou une autre intégration : la carte choisit alors l'entité météo et le capteur UV correspondants.
+
+- **Météo-France** : relevés, prévisions, UV et vigilance, sans clé ni compte. Recommandé en France.
+- **OpenWeatherMap** : les relevés fonctionnent dans tous les modes de l'intégration. Les **prévisions et l'UV** demandent un mode qui les fournit (One Call API v3.0). En mode « current » (gratuit, relevés seuls), choisissez une **Source des prévisions** différente, par exemple Météo-France : l'éditeur la propose automatiquement.
+
+```yaml
+type: custom:meteo-anime-card
+source: openweathermap
+entity: weather.openweathermap
+forecast_entity: weather.ma_ville   # prévisions Météo-France
+```
 
 ### Mode démo
 
