@@ -28,7 +28,7 @@
 
 # Carte Météo Animée
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz/)
 [![Release](https://img.shields.io/github/v/release/Marlboro62/ha-meteo-anime-card)](https://github.com/Marlboro62/ha-meteo-anime-card/releases)
 
 Carte Lovelace pour Home Assistant inspirée des applis météo des tablettes : **le fond s'anime selon la météo en direct**. Ciel calculé en temps réel, nuages en volume éclairés par le soleil, pluie, neige, orage, brouillard… et toutes les infos utiles par-dessus.
