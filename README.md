@@ -71,7 +71,7 @@ Si la carte n'apparaît pas encore dans la recherche, ajoutez le dépôt à la m
 
 1. Téléchargez [`meteo-anime-card.js`](https://raw.githubusercontent.com/Marlboro62/ha-meteo-anime-card/main/meteo-anime-card.js) (clic droit → Enregistrer sous) et copiez-le dans `/config/www/`.
 2. **Paramètres → Tableaux de bord → ⋮ → Ressources → Ajouter une ressource** :
-   - URL : `/local/meteo-anime-card.js?v=0.5.0`
+   - URL : `/local/meteo-anime-card.js?v=0.5.1`
    - Type : **Module JavaScript**
 3. Rechargez la page (Ctrl+F5).
 

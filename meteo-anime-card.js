@@ -4,7 +4,7 @@
  * brouillard, orage) qui suit en direct l'état d'une entité weather.*.
  * Aucune dépendance, aucun build : un seul fichier JS.
  */
-const CARD_VERSION = '0.5.0';
+const CARD_VERSION = '0.5.1';
 const QUALITY = { high: 0.6, medium: 0.4, low: 0.28 };
 
 /* ------------------------------------------------------------------ */
@@ -124,12 +124,15 @@ const fr1 = (v) => (isNum(v) ? v.toLocaleString('fr-FR', { minimumFractionDigits
 const dirFr = (b) => (isNum(b) ? DIRS[Math.round(((b % 360) + 360) % 360 / 45) % 8] : '');
 
 function iconFor(cond, night) {
+  cond = typeof cond === 'string' ? cond : '';
   if (night && cond === 'sunny') return 'mdi:weather-night';
   if (night && cond === 'partlycloudy') return 'mdi:weather-night-partly-cloudy';
   return ICONS[cond] || 'mdi:weather-cloudy';
 }
 
 function iconColor(cond, night) {
+  // une prévision peut arriver sans « condition » : ne jamais planter le rendu
+  cond = typeof cond === 'string' ? cond : '';
   if (cond === 'clear-night' || (night && cond === 'sunny')) return '#f4e7a1';
   if (cond === 'sunny') return '#ffc83d';
   if (cond === 'partlycloudy') return night ? '#e6e9f0' : '#ffd873';
@@ -140,6 +143,7 @@ function iconColor(cond, night) {
 }
 
 function condLabel(cond, night) {
+  cond = typeof cond === 'string' ? cond : '';
   if (night && cond === 'sunny') return 'Dégagé';
   return CONDITIONS_FR[cond] || cond;
 }
